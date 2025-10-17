@@ -35,6 +35,7 @@ setup(
             'velocity_control = robot_control.velocity_control:main',
             'waypoint_navigation = robot_control.waypoint_navigation:main',
             'advanced_waypoint_navigation = robot_control.advanced_waypoint_navigation:main',
+            'file_waypoint_navigation = robot_control.file_waypoint_navigation:main',
         ],
     },
 )
