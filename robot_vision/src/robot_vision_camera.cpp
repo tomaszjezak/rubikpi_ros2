@@ -11,11 +11,14 @@ RobotVisionCamera::RobotVisionCamera(const std::string & name)
   // Create publishers for raw, compressed images, and camera info
   pub_ = this->create_publisher<sensor_msgs::msg::Image>(topic_name, qos);
   compressed_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>(topic_name + "/compressed", qos);
-  camera_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(topic_name.substr(0, topic_name.find_last_of('/')) + "/camera_info", qos);
   
-  // Create SetCameraInfo service for calibration
+  // Extract camera namespace from topic_name (e.g., "camera" from "camera/image_raw")
+  std::string camera_namespace = topic_name.substr(0, topic_name.find_last_of('/'));
+  camera_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(camera_namespace + "/camera_info", qos);
+  
+  // Create SetCameraInfo service for calibration in the camera namespace
   set_camera_info_srv_ = this->create_service<sensor_msgs::srv::SetCameraInfo>(
-    "set_camera_info",
+    camera_namespace + "/set_camera_info",
     std::bind(&RobotVisionCamera::setCameraInfoCallback, this, std::placeholders::_1, std::placeholders::_2));
 
   // Load camera info first
