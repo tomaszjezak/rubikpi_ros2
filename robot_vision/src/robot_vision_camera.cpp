@@ -499,9 +499,9 @@ void RobotVisionCamera::saveCameraInfo(const sensor_msgs::msg::CameraInfo& camer
     return;
   }
   
-  fs << "image_width" << camera_info.width;
-  fs << "image_height" << camera_info.height;
-  fs << "camera_name" << camera_info.header.frame_id;
+  fs << "image_width" << int(camera_info.width);
+  fs << "image_height" << int(camera_info.height);
+  fs << "camera_name" << cv::String(camera_info.header.frame_id);
   
   // Camera matrix (3x3)
   cv::Mat K(3, 3, CV_64F, const_cast<double*>(camera_info.k.data()));
