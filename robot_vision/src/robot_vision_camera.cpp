@@ -508,7 +508,7 @@ void RobotVisionCamera::saveCameraInfo(const sensor_msgs::msg::CameraInfo& camer
   fs << "camera_matrix" << K;
   
   // Distortion model
-  fs << "distortion_model" << camera_info.distortion_model;
+  fs << "distortion_model" << cv::String(camera_info.distortion_model);
   
   // Distortion coefficients
   cv::Mat D(1, camera_info.d.size(), CV_64F, const_cast<double*>(camera_info.d.data()));
