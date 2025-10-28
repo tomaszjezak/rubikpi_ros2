@@ -13,6 +13,10 @@ RobotVisionCamera::RobotVisionCamera(const std::string & name)
   compressed_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>(topic_name + "/compressed", qos);
   camera_info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(topic_name.substr(0, topic_name.find_last_of('/')) + "/camera_info", qos);
   
+  // Create SetCameraInfo service for calibration
+  set_camera_info_srv_ = this->create_service<sensor_msgs::srv::SetCameraInfo>(
+    "set_camera_info",
+    std::bind(&RobotVisionCamera::setCameraInfoCallback, this, std::placeholders::_1, std::placeholders::_2));
 
   // Load camera info first
   loadCameraInfo();
@@ -460,6 +464,63 @@ GstFlowReturn RobotVisionCamera::processData(GstElement * sink, RobotVisionCamer
   }
 
   return GST_FLOW_ERROR;
+}
+
+// SetCameraInfo service callback for calibration
+void RobotVisionCamera::setCameraInfoCallback(
+    const std::shared_ptr<sensor_msgs::srv::SetCameraInfo::Request> request,
+    std::shared_ptr<sensor_msgs::srv::SetCameraInfo::Response> response)
+{
+  RCLCPP_INFO(this->get_logger(), "SetCameraInfo service called");
+  
+  // Update camera info
+  camera_info_msg_ = request->camera_info;
+  camera_info_loaded_ = true;
+  
+  // Save to YAML file
+  saveCameraInfo(request->camera_info);
+  
+  response->success = true;
+  response->status_message = "Camera info saved successfully";
+  
+  RCLCPP_INFO(this->get_logger(), "Camera info saved to: %s", camera_parameter_path.c_str());
+}
+
+// Save camera info to YAML file in OpenCV format
+void RobotVisionCamera::saveCameraInfo(const sensor_msgs::msg::CameraInfo& camera_info)
+{
+  cv::FileStorage fs(camera_parameter_path, cv::FileStorage::WRITE);
+  
+  if (!fs.isOpened()) {
+    RCLCPP_ERROR(this->get_logger(), "Failed to open YAML file for writing: %s", camera_parameter_path.c_str());
+    return;
+  }
+  
+  fs << "image_width" << camera_info.width;
+  fs << "image_height" << camera_info.height;
+  fs << "camera_name" << camera_info.header.frame_id;
+  
+  // Camera matrix (3x3)
+  cv::Mat K(3, 3, CV_64F, const_cast<double*>(camera_info.k.data()));
+  fs << "camera_matrix" << K;
+  
+  // Distortion model
+  fs << "distortion_model" << camera_info.distortion_model;
+  
+  // Distortion coefficients
+  cv::Mat D(1, camera_info.d.size(), CV_64F, const_cast<double*>(camera_info.d.data()));
+  fs << "distortion_coefficients" << D;
+  
+  // Rectification matrix
+  cv::Mat R(3, 3, CV_64F, const_cast<double*>(camera_info.r.data()));
+  fs << "rectification_matrix" << R;
+  
+  // Projection matrix
+  cv::Mat P(3, 4, CV_64F, const_cast<double*>(const_cast<double*>(camera_info.p.data())));
+  fs << "projection_matrix" << P;
+  
+  fs.release();
+  RCLCPP_INFO(this->get_logger(), "Camera info written to: %s", camera_parameter_path.c_str());
 }
 
 int main(int argc, char *argv[]){

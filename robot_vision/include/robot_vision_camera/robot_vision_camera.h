@@ -5,6 +5,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
+#include <sensor_msgs/srv/set_camera_info.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <gst/gst.h>
@@ -61,6 +62,9 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
   
+  // ROS2 service
+  rclcpp::Service<sensor_msgs::srv::SetCameraInfo>::SharedPtr set_camera_info_srv_;
+  
   // GStreamer elements
   CustomData data;
   GstBus *bus = nullptr;
@@ -102,6 +106,14 @@ public:
   void fillCameraInfoMessage();
   void buildGStreamerPipeline();
   void startGStreamerPipeline();
+  
+  // Service callback
+  void setCameraInfoCallback(
+    const std::shared_ptr<sensor_msgs::srv::SetCameraInfo::Request> request,
+    std::shared_ptr<sensor_msgs::srv::SetCameraInfo::Response> response);
+  
+  // Save camera info to YAML
+  void saveCameraInfo(const sensor_msgs::msg::CameraInfo& camera_info);
   
   // Static callback function for GStreamer
   static GstFlowReturn processData(GstElement * sink, RobotVisionCamera* node);
