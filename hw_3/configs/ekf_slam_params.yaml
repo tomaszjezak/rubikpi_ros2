@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    max_range: 5.0
+    m_dist_threshold: 2.0
+    dt: 0.1
+    process_noise_v: 0.2
+    process_noise_w: 0.1
+    measurement_noise_r: 0.1
+    measurement_noise_b: 0.1
+    state_cov_x: 0.5
+    state_cov_y: 0.5
+    state_cov_yaw: 0.5
+
