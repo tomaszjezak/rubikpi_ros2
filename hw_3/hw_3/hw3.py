@@ -106,26 +106,20 @@ class Hw3Node(Node):
         
 
         # Octagonal drive pattern waypoints
-        edge = 0.8 # diameter of 80%
-        s = (1.0 - 1.0/np.sqrt(2.0)) * 0.8  # ≈ 0.234314574
         self.waypoints = np.array([
-            [0.0,     0.0,    0.0],
-            [edge,    0.0,    0.0],
-
-            [edge,    s,      np.pi/2],
-            [s,       edge,   3*np.pi/4],
-            [-s,      edge,   np.pi],
-            [-edge,   s,     -3*np.pi/4],
-            [-edge,  -s,     -np.pi/2],
-            [-s,     -edge,  -np.pi/4],
-            [s,      -edge,   0.0],
-            [edge,   -s,      np.pi/4],
-
-            [edge,    0.0,    np.pi/2],
-            [0.0,     0.0,    np.pi],
+            [ 0.000000,  0.000000,  0.000000],
+            [ 0.200000,  0.000000,  1.570796],
+            [ 0.200000,  0.863600,  2.356194],
+            [-0.410657,  1.474257, -3.141593],
+            [-1.274257,  1.474257, -2.356194],
+            [-1.884915,  0.863600, -1.570796],
+            [-1.884915,  0.000000, -0.785398],
+            [-1.274257, -0.610657,  0.000000],
+            [-0.410657, -0.610657,  0.785398],
+            [ 0.200000, -0.000000,  1.570796],
         ])
         # 0,0,0 waypoint for testing
-        self.waypoints = np.array([[0.0, 0.0, 0.0]])
+        self.waypoints = np.array([[0.0, 0.0, 1.570796]])
 
         # PID controller used to smooth out the forward drive acceleration
         # The parameters are Kp, Ki, Kd
@@ -153,41 +147,12 @@ class Hw3Node(Node):
         self.localization_timer = self.create_timer(self.dt, self.localization_update) 
         
         self.stage = 'rotate_to_face_selected_waypoint'
+        self.prev_stage = self.stage
         self.stage_pid = PIDcontroller(0.8, 0.01, 0.005)
         self.fixed_rotation_vel = 0.785
-        
-    def update_dead_reckoning(self, linear_vel, angular_vel):
-        """
-        Update robot pose using dead reckoning
-        """
-        self.current_state[0] += linear_vel * np.cos(self.current_state[2]) * self.dt
-        self.current_state[1] += linear_vel * np.sin(self.current_state[2]) * self.dt
-        self.current_state[2] += angular_vel * self.dt
-        self.current_state[2] = (self.current_state[2] + np.pi) % (2 * np.pi) - np.pi
-        
-    def broadcast_base_link_tf(self):
-        """
-        Broadcast TF transform from odom to base_link
-        """
-        current_time = self.get_clock().now()
-        
-        t = TransformStamped()
-        t.header.stamp = current_time.to_msg()
-        t.header.frame_id = self.odom_frame
-        t.child_frame_id = self.base_frame
-        
-        t.transform.translation.x = self.current_state[0]
-        t.transform.translation.y = self.current_state[1]
-        t.transform.translation.z = 0.0
-        
-        qx, qy, qz, qw = self.euler_to_quaternion(0, 0, self.current_state[2])
-        t.transform.rotation.x = qx
-        t.transform.rotation.y = qy
-        t.transform.rotation.z = qz
-        t.transform.rotation.w = qw
-        
-        self.tf_broadcaster.sendTransform(t)
-        
+
+        self.do_nothing_ticks = 0
+
     def euler_to_quaternion(self, roll, pitch, yaw):
         """
         Convert Euler angles to quaternion
@@ -239,26 +204,62 @@ class Hw3Node(Node):
         """
         Main control loop with three stages: rotate to goal, drive, rotate to orientation
         """
-        self.broadcast_base_link_tf()
+        # EKF SLAM node is authoritative for odom -> base_link TF
+        # Read robot pose from EKF TF
+        transform = self.tf_buffer.lookup_transform(
+            'odom', 'base_link', rclpy.time.Time()
+        )
+        # Update current_state from EKF estimate
+        self.current_state[0] = transform.transform.translation.x
+        self.current_state[1] = transform.transform.translation.y
+        
+        # Extract yaw from quaternion
+        qx = transform.transform.rotation.x
+        qy = transform.transform.rotation.y
+        qz = transform.transform.rotation.z
+        qw = transform.transform.rotation.w
+        
+        # Convert quaternion to yaw (ZYX Euler)
+        siny_cosp = 2 * (qw * qz + qx * qy)
+        cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
+        self.current_state[2] = math.atan2(siny_cosp, cosy_cosp)
+        
+        # Dead check:
+        if self.prev_stage != self.stage:
+            self.do_nothing_ticks = 20
+            self.prev_stage = self.stage
+        if self.do_nothing_ticks > 0:
+            self.do_nothing_ticks -= 1
+            self.stop_robot()
+            return
         
         if self.current_waypoint_idx >= len(self.waypoints):
             # Only log once when all waypoints are reached
             if not hasattr(self, '_waypoints_complete_logged'):
                 self.get_logger().info('All waypoints reached! Stopping robot.')
                 self._waypoints_complete_logged = True
-            self.stop_robot()
+            # self.stop_robot()
             return
+        
 
         current_wp = self.waypoints[self.current_waypoint_idx]
         
+        # log the current waypoint and state
+        self.get_logger().info(
+            f'Current waypoint {self.current_waypoint_idx}: '
+            f'pos=({current_wp[0]:.3f}, {current_wp[1]:.3f}), yaw={current_wp[2]:.3f} | '
+            f'Robot pos=({self.current_state[0]:.3f}, {self.current_state[1]:.3f}), '
+            f'yaw={self.current_state[2]:.3f}'
+        )
+
         if not self.waypoint_reached:
             self.pid.setTarget(current_wp)
             self.waypoint_reached = True
             self.stage = 'rotate_to_face_selected_waypoint'
             self.stage_pid.setTarget(current_wp)
 
-        delta_x = current_wp[0] - self.obs_current_state[0]
-        delta_y = current_wp[1] - self.obs_current_state[1]
+        delta_x = current_wp[0] - self.current_state[0]
+        delta_y = current_wp[1] - self.current_state[1]
         position_error = np.sqrt(delta_x**2 + delta_y**2)
         twist_msg = Twist()
         
@@ -308,8 +309,8 @@ class Hw3Node(Node):
                 # Rotate constant speed towards final orientation
                 twist_msg.angular.z = float(self.get_rotation_direction(heading_error))
         
-        self.update_dead_reckoning(twist_msg.linear.x, twist_msg.angular.z)
-        # self.cmd_vel_pub.publish(twist_msg)
+        # EKF SLAM node handles pose estimation via TF
+        self.cmd_vel_pub.publish(twist_msg)
         
         
     def localization_update(self):

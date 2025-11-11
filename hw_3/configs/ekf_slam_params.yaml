@@ -3,11 +3,17 @@
     max_range: 5.0
     m_dist_threshold: 2.0
     dt: 0.1
-    process_noise_v: 0.2
-    process_noise_w: 0.1
-    measurement_noise_r: 0.1
-    measurement_noise_b: 0.1
-    state_cov_x: 0.5
-    state_cov_y: 0.5
-    state_cov_yaw: 0.5
+    process_noise_v: 0.0025  # m/s (std) - from empirical drive tests
+    process_noise_w: 0.058   # rad/s (std) - from empirical rotation tests
+    measurement_noise_r: 0.02
+    measurement_noise_b: 0.02
+    # Starting state confidence
+    state_cov_x: 0.0001 # 95% within +- 2 cm
+    state_cov_y: 0.0001 # 95% within +- 2 cm
+    state_cov_yaw: 0.0003 # 95% within +- 2 degrees
+    # Yaw calibration parameters (to fix non-linear turn error)
+    # If robot turns 80° when commanded 90°, use: angular_velocity_scale = 90/80 = 1.125
+    # Measure actual turn vs commanded turn and adjust accordingly
+    angular_velocity_scale: 1.0  # Scale factor (default 1.0 = no calibration)
+    angular_velocity_bias: 0.0   # Constant bias in rad/s (default 0.0 = no bias)
 

@@ -108,16 +108,28 @@ def calc_landmark_position(x, z):
     Initialize new landmark position from measurement
     
     Args:
-        x: Robot state [x, y, yaw]
-        z: Measurement [range, bearing]
+        x: Robot state [x, y, yaw] as (3, 1) array
+        z: Measurement [range, bearing] as (2, 1) array
         
     Returns:
         Landmark position [x, y] as 2x1 numpy array
     """
-    zp = np.zeros((2, 1))
+    # Ensure z is properly shaped and extract scalars
+    if z.shape == (2, 1):
+        range_val = float(z[0, 0])
+        bearing_val = float(z[1, 0])
+    elif z.shape == (2,):
+        range_val = float(z[0])
+        bearing_val = float(z[1])
+    else:
+        # Flatten and take first two elements
+        z_flat = z.flatten()
+        range_val = float(z_flat[0])
+        bearing_val = float(z_flat[1])
     
-    zp[0, 0] = x[0, 0] + z[0] * math.cos(x[2, 0] + z[1])
-    zp[1, 0] = x[1, 0] + z[0] * math.sin(x[2, 0] + z[1])
+    zp = np.zeros((2, 1))
+    zp[0, 0] = x[0, 0] + range_val * math.cos(x[2, 0] + bearing_val)
+    zp[1, 0] = x[1, 0] + range_val * math.sin(x[2, 0] + bearing_val)
     
     return zp
 
@@ -172,9 +184,15 @@ def calc_innovation(lm, xEst, PEst, z, LMid, R):
     delta = lm - xEst[0:2]
     q = (delta.T @ delta)[0, 0]
     z_angle = math.atan2(delta[1, 0], delta[0, 0]) - xEst[2, 0]
-    zp = np.array([[math.sqrt(q), pi_2_pi(z_angle)]])
-    y = (z - zp).T
-    y[1] = pi_2_pi(y[1])
+    # Ensure zp is (2, 1) column vector to match z shape
+    zp = np.array([[math.sqrt(q)], [pi_2_pi(z_angle)]])
+    
+    # Ensure z is (2, 1) column vector
+    if z.shape != (2, 1):
+        z = z.reshape(2, 1)
+    
+    y = z - zp
+    y[1, 0] = pi_2_pi(y[1, 0])
     H = jacob_h(q, delta, xEst, LMid + 1)
     S = H @ PEst @ H.T + R
     
@@ -202,7 +220,8 @@ def search_correspond_landmark_id(xAug, PAug, zi, m_dist_th, R):
     for i in range(nLM):
         lm = get_landmark_position_from_state(xAug, i)
         y, S, H = calc_innovation(lm, xAug, PAug, zi, i, R)
-        min_dist.append(y.T @ np.linalg.inv(S) @ y)
+        mahal_dist = float((y.T @ np.linalg.inv(S) @ y)[0,0])
+        min_dist.append(mahal_dist)
     
     min_dist.append(m_dist_th)  # new landmark
     
@@ -211,7 +230,7 @@ def search_correspond_landmark_id(xAug, PAug, zi, m_dist_th, R):
     return min_id
 
 
-def ekf_slam(xEst, PEst, u, z, dt, Q, R, Cx, m_dist_th):
+def ekf_slam(xEst, PEst, u, z, dt, Q, R, Cx, m_dist_th, landmark_indices=None, is_turning=False):
     """
     EKF SLAM main function
     
@@ -225,40 +244,212 @@ def ekf_slam(xEst, PEst, u, z, dt, Q, R, Cx, m_dist_th):
         R: Measurement noise covariance (2x2)
         Cx: State noise covariance (3x3)
         m_dist_th: Mahalanobis distance threshold
+        landmark_indices: Optional list of landmark indices for each measurement.
+                         If None, uses Mahalanobis distance for data association.
+                         If provided, must have same length as z.
+        is_turning: If True, robot is turning in place - don't update position
         
     Returns:
         xEst: Updated state vector
         PEst: Updated covariance matrix
     """
     # Predict
+    # Ensure xEst maintains column vector shape
+    if len(xEst.shape) != 2 or xEst.shape[1] != 1:
+        xEst = xEst.reshape(-1, 1)
+    
     G, Fx = jacob_motion(xEst, u, dt)
-    xEst[0:ROBOT_STATE_SIZE] = motion_model(xEst[0:ROBOT_STATE_SIZE], u, dt)
+    robot_state = xEst[0:ROBOT_STATE_SIZE].reshape(ROBOT_STATE_SIZE, 1)
+    updated_robot = motion_model(robot_state, u, dt)
+    
+    # Ensure updated_robot maintains column vector shape
+    if updated_robot.shape != (ROBOT_STATE_SIZE, 1):
+        updated_robot = updated_robot.reshape(ROBOT_STATE_SIZE, 1)
+    
+    # Store predicted position for use in measurement updates
+    predicted_robot_x = updated_robot[0, 0]
+    predicted_robot_y = updated_robot[1, 0]
+    
+    xEst[0:ROBOT_STATE_SIZE] = updated_robot
     PEst = G.T @ PEst @ G + Fx.T @ Cx @ Fx
-    initP = np.eye(2)
+    
+    # Initial covariance for new landmarks (high uncertainty)
+    # Use large initial uncertainty for x and y of new landmarks
+    initP = np.eye(LM_SIZE) * 0.0009 # set initial variance to 0.0009 --> standard deviation 0.03
     
     # Update
     if z is not None and len(z) > 0:
         for iz in range(len(z)):  # for each observation
             zi = z[iz, :].reshape(2, 1)  # [range, bearing]
-            min_id = search_correspond_landmark_id(xEst, PEst, zi, m_dist_th, R)
             
+            # Ensure xEst maintains column vector shape
+            if len(xEst.shape) != 2 or xEst.shape[1] != 1:
+                xEst = xEst.reshape(-1, 1)
+            
+            # Data association: use provided landmark index or Mahalanobis distance
             nLM = calc_n_lm(xEst)
+            if landmark_indices is not None and iz < len(landmark_indices):
+                # Use known landmark index from tag ID
+                min_id = landmark_indices[iz]
+                # If landmark doesn't exist yet, it's a new landmark
+                if min_id >= nLM:
+                    min_id = nLM  # Will create new landmark
+            else:
+                # Use Mahalanobis distance for data association
+                min_id = search_correspond_landmark_id(xEst, PEst, zi, m_dist_th, R)
+            
             if min_id == nLM:
                 # New landmark - extend state and covariance
-                xAug = np.vstack((xEst, calc_landmark_position(xEst[0:ROBOT_STATE_SIZE], zi)))
-                PAug = np.vstack((np.hstack((PEst, np.zeros((len(xEst), LM_SIZE)))),
-                                  np.hstack((np.zeros((LM_SIZE, len(xEst))), initP))))
+                # Current state size
+                current_size = len(xEst)
+                
+                # Ensure robot state slice is column vector
+                robot_state = xEst[0:ROBOT_STATE_SIZE].reshape(ROBOT_STATE_SIZE, 1)
+                new_lm = calc_landmark_position(robot_state, zi)
+                
+                # Ensure new_lm is column vector (2, 1)
+                if new_lm.shape != (2, 1):
+                    new_lm = new_lm.reshape(2, 1)
+                
+                # Ensure xEst is column vector before vstack
+                if len(xEst.shape) != 2 or xEst.shape[1] != 1:
+                    xEst = xEst.reshape(-1, 1)
+                
+                # Verify PEst matches current state size before augmentation
+                if PEst.shape[0] != current_size or PEst.shape[1] != current_size:
+                    print(f"WARNING: Before augmentation, PEst {PEst.shape} != xEst size {current_size}")
+                    PEst = np.eye(current_size) * np.trace(PEst) / max(PEst.shape[0], 1)
+                
+                # Augment state: add new landmark [x, y]
+                xAug = np.vstack((xEst, new_lm))
+                new_size = len(xAug)  # Should be current_size + 2
+                
+                # Augment covariance matrix
+                # Structure: [PEst    0  ]
+                #           [  0   initP]
+                top_row = np.hstack((PEst, np.zeros((current_size, LM_SIZE))))
+                bottom_row = np.hstack((np.zeros((LM_SIZE, current_size)), initP))
+                PAug = np.vstack((top_row, bottom_row))
+                
+                # Verify augmentation worked correctly
+                if PAug.shape[0] != new_size or PAug.shape[1] != new_size:
+                    print(f"ERROR: After augmentation, PAug {PAug.shape} != expected ({new_size}, {new_size})")
+                    # Fix it
+                    PAug = np.eye(new_size) * 0.5
+                
+                # Update state and covariance
                 xEst = xAug
                 PEst = PAug
+            
+            # Ensure xEst and PEst maintain correct shapes and matching sizes
+            if len(xEst.shape) != 2 or xEst.shape[1] != 1:
+                xEst = xEst.reshape(-1, 1)
+            
+            state_size = len(xEst)
+            
+            # CRITICAL: Verify PEst matches xEst size - if not, something went wrong
+            if PEst.shape[0] != state_size or PEst.shape[1] != state_size:
+                print(f"ERROR: PEst shape {PEst.shape} doesn't match xEst size {state_size} after landmark processing")
+                # This is a critical error - reinitialize with proper size
+                # Use a large initial covariance for new landmarks
+                old_size = min(PEst.shape[0], state_size)
+                new_PEst = np.eye(state_size) * 10.0  # Large initial uncertainty
+                if old_size > 0:
+                    new_PEst[:old_size, :old_size] = PEst[:old_size, :old_size]
+                PEst = new_PEst
             
             lm = get_landmark_position_from_state(xEst, min_id)
             y, S, H = calc_innovation(lm, xEst, PEst, zi, min_id, R)
             
+            # Ensure y is (2, 1) column vector
+            if y.shape != (2, 1):
+                y = y.reshape(2, 1)
+            
+            # Verify H has correct dimensions: (2, state_size)
+            if H.shape[0] != 2 or H.shape[1] != state_size:
+                print(f"ERROR: H shape {H.shape} doesn't match expected (2, {state_size})")
+                # Skip this update if dimensions don't match
+                continue
+            
+            # Verify PEst and H dimensions are compatible
+            if PEst.shape[0] != H.shape[1]:
+                print(f"ERROR: PEst shape {PEst.shape} incompatible with H shape {H.shape}")
+                continue
+            
             K = (PEst @ H.T) @ np.linalg.inv(S)
-            xEst = xEst + (K @ y)
-            PEst = (np.eye(len(xEst)) - (K @ H)) @ PEst
+            
+            # Verify K dimensions: should be (state_size, 2)
+            if K.shape[0] != state_size or K.shape[1] != 2:
+                print(f"ERROR: K shape {K.shape} doesn't match expected ({state_size}, 2)")
+                continue
+            
+            # Ensure K @ y produces (state_size, 1) column vector
+            update = K @ y
+            if len(update.shape) != 2 or update.shape[1] != 1:
+                update = update.reshape(-1, 1)
+            
+            # Verify update has correct size
+            if len(update) != state_size:
+                print(f"ERROR: update size {len(update)} doesn't match state size {state_size}")
+                continue
+            
+            # Apply update
+            xEst = xEst + update
+            
+            # CRITICAL FIX: If robot is turning in place, don't update position
+            # This prevents the EKF from incorrectly updating position during pure rotation
+            # The motion model predicts no position change, so measurements shouldn't change it
+            if is_turning:
+                # Reset position to predicted position (no change during pure rotation)
+                # Only allow orientation and landmark updates
+                xEst[0, 0] = predicted_robot_x
+                xEst[1, 0] = predicted_robot_y
+            
+            # Ensure xEst maintains column vector shape after update
+            if len(xEst.shape) != 2 or xEst.shape[1] != 1:
+                xEst = xEst.reshape(-1, 1)
+            
+            # Before covariance update, verify all dimensions
+            final_state_size = len(xEst)
+            if final_state_size != state_size:
+                print(f"WARNING: State size changed from {state_size} to {final_state_size}")
+                state_size = final_state_size
+            
+            # CRITICAL: PEst MUST match state_size before covariance update
+            if PEst.shape[0] != state_size or PEst.shape[1] != state_size:
+                print(f"CRITICAL ERROR: Before covariance update, PEst {PEst.shape} != state size {state_size}")
+                # Emergency fix: create identity matrix with proper size
+                PEst = np.eye(state_size) * 10.0
+            
+            # Verify H and K dimensions are correct
+            if H.shape != (2, state_size):
+                print(f"ERROR: H shape {H.shape} != (2, {state_size})")
+                continue
+            if K.shape != (state_size, 2):
+                print(f"ERROR: K shape {K.shape} != ({state_size}, 2)")
+                continue
+            
+            # Compute covariance update: P = (I - K*H) * P
+            # I - K*H should be (state_size, state_size)
+            I_KH = np.eye(state_size) - (K @ H)
+            
+            # Verify I_KH is square
+            if I_KH.shape != (state_size, state_size):
+                print(f"ERROR: I_KH shape {I_KH.shape} != ({state_size}, {state_size})")
+                continue
+            
+            # Update covariance
+            PEst = I_KH @ PEst
+            
+            # Final verification: PEst should still be (state_size, state_size)
+            if PEst.shape != (state_size, state_size):
+                print(f"ERROR: After covariance update, PEst {PEst.shape} != ({state_size}, {state_size})")
+                PEst = np.eye(state_size) * 10.0
     
-    xEst[2] = pi_2_pi(xEst[2])
+    # Normalize yaw angle and ensure column vector shape
+    if len(xEst.shape) != 2 or xEst.shape[1] != 1:
+        xEst = xEst.reshape(-1, 1)
+    xEst[2, 0] = pi_2_pi(xEst[2, 0])
     
     return xEst, PEst
 

@@ -8,8 +8,8 @@ camera_matrix: !!opencv-matrix
   rows: 3
   cols: 3
   dt: d
-  data: [626.79632, 0.0, 644.56683,
-         0.0, 631.71139, 303.66954,
+  data: [638.7681102034351, 0.0, 636.092831244863,
+         0.0, 636.7959460578961, 316.8089513771885,
          0.0, 0.0, 1.0]
 
 distortion_model: plumb_bob
@@ -17,7 +17,8 @@ distortion_coefficients: !!opencv-matrix
   rows: 1
   cols: 5
   dt: d
-  data: [-0.274755, 0.054932, 0.000526, 0.000454, 0.0]
+  data: [-0.2878032575099799, 0.06030978158814642,
+         -0.0009924036639289196, 0.00048994744760567, 0.0]
 
 rectification_matrix: !!opencv-matrix
   rows: 3
@@ -27,10 +28,11 @@ rectification_matrix: !!opencv-matrix
          0.0, 1.0, 0.0,
          0.0, 0.0, 1.0]
 
+# P is the projection matrix - for raw images, should be [K | 0]
 projection_matrix: !!opencv-matrix
   rows: 3
   cols: 4
   dt: d
-  data: [430.88684, 0.0, 643.54172, 0.0,
-         0.0, 559.62720, 289.38364, 0.0,
+  data: [638.7681102034351, 0.0, 636.092831244863, 0.0,
+         0.0, 636.7959460578961, 316.8089513771885, 0.0,
          0.0, 0.0, 1.0, 0.0]

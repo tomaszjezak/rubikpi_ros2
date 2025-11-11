@@ -12,14 +12,14 @@ class VelocityToMotorNode(Node):
         self.wheel_base = 0.127  # [m]
 
         self.cmd_max = 1.5
-        self.left_linear_deadzone = 0.15 # carpet in dorm
+        self.left_linear_deadzone = 0.10
         self.left_linear_slope = 2.5 
-        self.right_linear_deadzone = 0.15
+        self.right_linear_deadzone = 0.10
         self.right_linear_slope = 2.5 
         
-        self.left_angular_deadzone = 0.245
+        self.left_angular_deadzone = 0.22
         self.left_angular_slope = 16.0
-        self.right_angular_deadzone = 0.24
+        self.right_angular_deadzone = 0.22
         self.right_angular_slope = 16.0
 
         self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
