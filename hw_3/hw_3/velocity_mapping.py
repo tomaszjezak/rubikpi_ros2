@@ -17,10 +17,20 @@ class VelocityToMotorNode(Node):
         self.right_linear_deadzone = 0.10
         self.right_linear_slope = 2.5 
         
-        self.left_angular_deadzone = 0.22
-        self.left_angular_slope = 16.0
-        self.right_angular_deadzone = 0.22
-        self.right_angular_slope = 16.0
+        program = 'square'
+        if program == 'octagon':
+            self.left_angular_deadzone = 0.235
+            self.left_angular_slope = 16.0
+            self.right_angular_deadzone = 0.235
+            self.right_angular_slope = 16.0
+        elif program == 'square':
+            self.left_angular_deadzone = 0.20
+            self.left_angular_slope = 16.0
+            self.right_angular_deadzone = 0.20
+            self.right_angular_slope = 16.0
+        else:
+            # compile error
+            raise ValueError(f"Unknown program type: {program}")
 
         self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 10)
         self.motor_pub = self.create_publisher(Float32MultiArray, '/motor_commands', 10)

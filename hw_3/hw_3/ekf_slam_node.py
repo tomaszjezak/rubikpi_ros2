@@ -11,6 +11,9 @@ from tf2_ros import Buffer, TransformListener, TransformBroadcaster
 import numpy as np
 import math
 import time
+import pickle
+import os
+from pathlib import Path
 
 # Try to import apriltag_msgs, fallback if not available
 try:
@@ -47,9 +50,6 @@ class EKF_SLAM_Node(Node):
         self.declare_parameter('state_cov_x', 0.5)
         self.declare_parameter('state_cov_y', 0.5)
         self.declare_parameter('state_cov_yaw', 0.5)
-        # Yaw calibration parameters (to fix non-linear turn error)
-        self.declare_parameter('angular_velocity_scale', 1.0)  # Scale factor: if robot turns 80° when commanded 90°, use 90/80 = 1.125
-        self.declare_parameter('angular_velocity_bias', 0.0)   # Constant bias (rad/s)
         
         # Get parameters
         self.max_range = self.get_parameter('max_range').get_parameter_value().double_value
@@ -62,8 +62,6 @@ class EKF_SLAM_Node(Node):
         state_cov_x = self.get_parameter('state_cov_x').get_parameter_value().double_value
         state_cov_y = self.get_parameter('state_cov_y').get_parameter_value().double_value
         state_cov_yaw = self.get_parameter('state_cov_yaw').get_parameter_value().double_value
-        self.angular_velocity_scale = self.get_parameter('angular_velocity_scale').get_parameter_value().double_value
-        self.angular_velocity_bias = self.get_parameter('angular_velocity_bias').get_parameter_value().double_value
         
         # Build noise matrices
         self.Q = np.diag([process_noise_v, process_noise_w]) ** 2
@@ -80,11 +78,24 @@ class EKF_SLAM_Node(Node):
         self.PEst = np.eye(ROBOT_STATE_SIZE) * np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
         
         # Storage
-        self.trajectory_history = []
+        self.trajectory_history = []  # Full trajectory at EKF update rate
+        self.trajectory_1hz = []  # Trajectory sampled at 1Hz for plotting
+        self.waypoint_timestamps = []  # List of (waypoint_idx, timestamp, x, y, yaw)
         self.last_u = np.array([[0.0], [0.0]])
         self.last_u_time = None
         self.is_turning = False  # Flag to detect pure rotation commands
         self.prev_is_turning = False  # Track previous state to detect transitions
+        
+        # Waypoint detection - use same waypoints and tolerance as hw3.py
+        # These match the waypoints defined in hw3.py
+        self.waypoints = np.array([
+            [ 0.000000,  0.850000,  0.0],
+            [-0.850000,  0.850000, 1.5708],
+            [-0.850000,  0.000000,  3.14159],
+            [ 0.000000,  0.000000,  -1.5708],
+        ])
+        self.waypoint_tolerance = 0.15  # meters - same as hw3.py tolerance
+        self.reached_waypoints = set()  # Track which waypoints we've already logged
         
         # Latest detections
         self.latest_detections = None
@@ -122,9 +133,23 @@ class EKF_SLAM_Node(Node):
         # Timer for EKF update
         self.ekf_timer = self.create_timer(self.dt, self.ekf_update)
         
+        # Timer for 1Hz trajectory logging
+        self.trajectory_log_timer = self.create_timer(1.0, self.log_trajectory_1hz)
+        
         # Track previous values for change detection
         self.prev_robot_state = np.array([[0.0], [0.0], [0.0]])
         self.update_count = 0
+        
+        # Data file path for saving
+        self.data_file_path = os.path.join(
+            os.path.expanduser('~'), '.ros', 'slam_data.pkl'
+        )
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(self.data_file_path), exist_ok=True)
+        
+        # Broadcast initial TF immediately so odom frame exists right away
+        # This ensures other nodes (like hw3.py) can look up odom -> base_link immediately
+        self.broadcast_tf()
         
         self.get_logger().info('=' * 70)
         self.get_logger().info('EKF SLAM Node initialized')
@@ -158,6 +183,46 @@ class EKF_SLAM_Node(Node):
             #self.get_logger().info(f'[DETECTIONS] {len(msg.detections)} tag(s): {", ".join(tag_ids)}')
         self.latest_detections = msg
         self.latest_detections_time = self.get_clock().now()
+    
+    def check_waypoint_reached(self, robot_state):
+        """Check if robot is near any waypoint and log it if reached"""
+        robot_x = robot_state[0, 0]
+        robot_y = robot_state[1, 0]
+        robot_yaw = robot_state[2, 0]
+        
+        for waypoint_idx, waypoint in enumerate(self.waypoints):
+            # Skip if already logged
+            if waypoint_idx in self.reached_waypoints:
+                continue
+            
+            wp_x, wp_y, wp_yaw = waypoint
+            # Check distance to waypoint
+            distance = math.sqrt((robot_x - wp_x)**2 + (robot_y - wp_y)**2)
+            
+            if distance < self.waypoint_tolerance:
+                # Waypoint reached!
+                timestamp = self.get_clock().now().nanoseconds / 1e9
+                self.waypoint_timestamps.append((
+                    waypoint_idx,
+                    timestamp,
+                    float(robot_x),
+                    float(robot_y),
+                    float(robot_yaw)
+                ))
+                self.reached_waypoints.add(waypoint_idx)
+                self.get_logger().info(f'[WAYPOINT REACHED] Waypoint {waypoint_idx} at [{robot_x:.3f}, {robot_y:.3f}], yaw={math.degrees(robot_yaw):.1f}°')
+                break  # Only log one waypoint per check
+    
+    def log_trajectory_1hz(self):
+        """Log trajectory data at 1Hz for visualization"""
+        robot_state = self.xEst[0:ROBOT_STATE_SIZE].copy()
+        timestamp = self.get_clock().now().nanoseconds / 1e9
+        self.trajectory_1hz.append((
+            timestamp,
+            float(robot_state[0, 0]),
+            float(robot_state[1, 0]),
+            float(robot_state[2, 0])
+        ))
     
     def convert_detections_to_measurements(self):
         """
@@ -274,15 +339,10 @@ class EKF_SLAM_Node(Node):
                 if new_tags:
                     self.get_logger().info(f'[TAGS] New: {new_tags}')
         
-        # Apply yaw calibration to control input
-        # Calibrate angular velocity to account for non-linear turn error
-        u_calibrated = u.copy()
-        u_calibrated[1, 0] = u[1, 0] * self.angular_velocity_scale + self.angular_velocity_bias
-        
         # Run EKF SLAM with tag ID-based data association
         # Pass is_turning flag to prevent position updates during pure rotation
         self.xEst, self.PEst = ekf_slam(
-            self.xEst, self.PEst, u_calibrated, z,
+            self.xEst, self.PEst, u, z,
             self.dt, self.Q, self.R, self.Cx, self.m_dist_threshold,
             landmark_indices=landmark_indices,
             is_turning=self.is_turning
@@ -334,6 +394,9 @@ class EKF_SLAM_Node(Node):
         
         # Store trajectory history
         self.trajectory_history.append(robot_state)
+        
+        # Check if waypoint reached
+        self.check_waypoint_reached(robot_state)
         
         # Publish robot pose
         self.publish_robot_pose()
@@ -405,21 +468,28 @@ class EKF_SLAM_Node(Node):
         
         # Log landmark positions and covariance
         if nLM > 0:
-            self.get_logger().info('  Landmark Positions:')
+            self.get_logger().info('  Landmark Positions and Covariances:')
             # Sort by tag ID for consistent output
             tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
-            for tag_id in tag_id_list[:5]:  # Show up to 5 landmarks
+            for tag_id in tag_id_list:
                 landmark_idx = self.tag_id_to_landmark_index[tag_id]
                 lm = get_landmark_position_from_state(self.xEst, landmark_idx)
                 # Get covariance for this landmark
                 lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
                 cov_xx = self.PEst[lm_start_idx, lm_start_idx]
                 cov_yy = self.PEst[lm_start_idx + 1, lm_start_idx + 1]
+                cov_xy = self.PEst[lm_start_idx, lm_start_idx + 1]
                 std_x = math.sqrt(cov_xx)
                 std_y = math.sqrt(cov_yy)
-                self.get_logger().info(f'    Tag {tag_id}: [{lm[0,0]:.3f}, {lm[1,0]:.3f}]m ± [{std_x:.3f}, {std_y:.3f}]m')
-            if len(tag_id_list) > 5:
-                self.get_logger().info(f'    ... and {len(tag_id_list) - 5} more landmark(s)')
+                # Calculate correlation coefficient
+                correlation = cov_xy / (std_x * std_y) if (std_x * std_y) > 0 else 0.0
+                # Calculate 2σ uncertainty ellipse semi-axes (95% confidence)
+                eigenvals, eigenvecs = np.linalg.eigh(np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]]))
+                semi_major = 2.0 * math.sqrt(max(eigenvals))  # 2σ
+                semi_minor = 2.0 * math.sqrt(min(eigenvals))  # 2σ
+                self.get_logger().info(f'    Tag {tag_id}: pos=[{lm[0,0]:.4f}, {lm[1,0]:.4f}]m')
+                self.get_logger().info(f'      Covariance: σ_x={std_x:.4f}m, σ_y={std_y:.4f}m, σ_xy={cov_xy:.6f}')
+                self.get_logger().info(f'      Correlation: {correlation:.4f}, 2σ ellipse: [{semi_major:.4f}, {semi_minor:.4f}]m')
         
         # Log robot pose uncertainty
         robot_cov_xx = self.PEst[0, 0]
@@ -456,6 +526,82 @@ class EKF_SLAM_Node(Node):
         state_size = len(self.xEst)
         self.get_logger().info(f'  State vector size: {state_size} (robot: {ROBOT_STATE_SIZE}, landmarks: {state_size - ROBOT_STATE_SIZE})')
         self.get_logger().info('=' * 70)
+    
+    def log_landmark_covariances(self):
+        """Log detailed covariance information for all landmarks"""
+        nLM = calc_n_lm(self.xEst)
+        if nLM == 0:
+            return
+        
+        self.get_logger().info('=' * 70)
+        self.get_logger().info('[LANDMARK COVARIANCE REPORT]')
+        self.get_logger().info(f'Total landmarks: {nLM}')
+        
+        # Sort by tag ID for consistent output
+        tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
+        
+        for tag_id in tag_id_list:
+            landmark_idx = self.tag_id_to_landmark_index[tag_id]
+            lm = get_landmark_position_from_state(self.xEst, landmark_idx)
+            lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
+            
+            # Extract 2x2 covariance matrix for this landmark
+            cov_xx = self.PEst[lm_start_idx, lm_start_idx]
+            cov_yy = self.PEst[lm_start_idx + 1, lm_start_idx + 1]
+            cov_xy = self.PEst[lm_start_idx, lm_start_idx + 1]
+            cov_yx = self.PEst[lm_start_idx + 1, lm_start_idx]  # Should equal cov_xy
+            
+            std_x = math.sqrt(cov_xx)
+            std_y = math.sqrt(cov_yy)
+            correlation = cov_xy / (std_x * std_y) if (std_x * std_y) > 0 else 0.0
+            
+            # Eigenvalue decomposition for uncertainty ellipse
+            cov_matrix = np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]])
+            eigenvals, eigenvecs = np.linalg.eigh(cov_matrix)
+            semi_major_2sigma = 2.0 * math.sqrt(max(eigenvals))
+            semi_minor_2sigma = 2.0 * math.sqrt(min(eigenvals))
+            angle_rad = math.atan2(eigenvecs[1, 0], eigenvecs[0, 0])
+            angle_deg = math.degrees(angle_rad)
+            
+            self.get_logger().info(f'  Tag {tag_id}:')
+            self.get_logger().info(f'    Position: [{lm[0,0]:.6f}, {lm[1,0]:.6f}] m')
+            self.get_logger().info(f'    Covariance Matrix:')
+            self.get_logger().info(f'      [{cov_xx:.6f}, {cov_xy:.6f}]')
+            self.get_logger().info(f'      [{cov_yx:.6f}, {cov_yy:.6f}]')
+            self.get_logger().info(f'    Standard Deviations: σ_x={std_x:.6f} m, σ_y={std_y:.6f} m')
+            self.get_logger().info(f'    Correlation Coefficient: {correlation:.6f}')
+            self.get_logger().info(f'    2σ Uncertainty Ellipse (95% confidence):')
+            self.get_logger().info(f'      Semi-major axis: {semi_major_2sigma:.6f} m')
+            self.get_logger().info(f'      Semi-minor axis: {semi_minor_2sigma:.6f} m')
+            self.get_logger().info(f'      Orientation: {angle_deg:.2f}°')
+        
+        self.get_logger().info('=' * 70)
+    
+    def save_slam_data(self):
+        """Save SLAM data to pickle file for post-processing visualization"""
+        try:
+            # Log detailed covariance information before saving
+            self.log_landmark_covariances()
+            
+            data = {
+                'trajectory_1hz': self.trajectory_1hz,  # List of (timestamp, x, y, yaw)
+                'waypoint_timestamps': self.waypoint_timestamps,  # List of (waypoint_idx, timestamp, x, y, yaw)
+                'final_state_vector': self.xEst.copy(),  # Final state vector
+                'final_covariance': self.PEst.copy(),  # Final covariance matrix
+                'tag_id_to_landmark_index': self.tag_id_to_landmark_index.copy(),  # Tag ID mapping
+                'robot_state_size': ROBOT_STATE_SIZE,
+                'landmark_size': LM_SIZE
+            }
+            
+            with open(self.data_file_path, 'wb') as f:
+                pickle.dump(data, f)
+            
+            self.get_logger().info(f'[DATA SAVED] SLAM data saved to {self.data_file_path}')
+            self.get_logger().info(f'  Trajectory samples (1Hz): {len(self.trajectory_1hz)}')
+            self.get_logger().info(f'  Waypoints reached: {len(self.waypoint_timestamps)}')
+            self.get_logger().info(f'  Landmarks: {len(self.tag_id_to_landmark_index)}')
+        except Exception as e:
+            self.get_logger().error(f'[DATA SAVE ERROR] Failed to save SLAM data: {e}')
 
 
 def main(args=None):
@@ -467,6 +613,8 @@ def main(args=None):
     except KeyboardInterrupt:
         node.get_logger().info('EKF SLAM Node stopped by keyboard interrupt')
     finally:
+        # Save data before shutdown
+        node.save_slam_data()
         node.destroy_node()
         rclpy.shutdown()
 

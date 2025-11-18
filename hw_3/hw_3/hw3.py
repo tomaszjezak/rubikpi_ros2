@@ -103,23 +103,44 @@ class Hw3Node(Node):
         self.base_frame = 'base_link'
         
         self.tag_positions = {}
-        
 
-        # Octagonal drive pattern waypoints
-        self.waypoints = np.array([
-            [ 0.000000,  0.000000,  0.000000],
-            [ 0.200000,  0.000000,  1.570796],
-            [ 0.200000,  0.863600,  2.356194],
-            [-0.410657,  1.474257, -3.141593],
-            [-1.274257,  1.474257, -2.356194],
-            [-1.884915,  0.863600, -1.570796],
-            [-1.884915,  0.000000, -0.785398],
-            [-1.274257, -0.610657,  0.000000],
-            [-0.410657, -0.610657,  0.785398],
-            [ 0.200000, -0.000000,  1.570796],
+        # Square drive pattern waypoints (starts by turning left 90 degrees)
+        waypoints_single_square = np.array([
+            [ 0.000000,  0.850000,  0.0],  # Drive to north 0.85m, face east to read tag
+            [-0.850000,  0.850000, 1.5708],  # Drive west 0.85m, turn north to read tag
+            [-0.850000,  0.000000,  3.14159],  # Drive south 0.85m, turn west to read tag
+            [ 0.000000,  0.000000,  -1.5708],  # Drive east 0.85m, turn south to read tag
         ])
+        # Double square drive pattern waypoints
+        waypoints_double_square = np.vstack((waypoints_single_square, waypoints_single_square))
+        # Octagonal drive pattern
+        waypoints_octagon = np.array([
+            # 0. Drive forward by 0.425. Face up 45 degrees to read tag
+            [ 0.425000, 0.000000, 0.7854],
+            # Now we are on the octagon edge
+            #. 1. Go up by 0.85m. face upwards cuz whatever
+            [ 0.425000, 0.850000, 1.5708],
+            # 2. Go diagonal up-left by sqrt(2)*0.425
+            [ 0.000000, 1.275000, 2.3562],
+            # 3. Go left by 0.85m
+            [-0.850000, 1.275000, 3.14159],
+            # 4. Go diagonal down-left by sqrt(2)*0.425
+            [-1.275000, 0.850000, -2.3562],
+            # 5. Go down by 0.85m
+            [-1.275000, 0.000000, -1.5708],
+            # 6. Go diagonal down-right by sqrt(2)*0.425
+            [-0.850000, -0.425000, -0.7854],
+            # 7. Go right by 0.85m
+            [ 0.000000, -0.425000, 0.0],
+            # 8. Go diagonal up-right by sqrt(2)*0.425
+            [ 0.425000, 0.000000, 0.7854],
+        ])
+        # Double octagonal drive pattern waypoints
+        waypoints_double_octagon = np.vstack((waypoints_octagon, waypoints_octagon))
         # 0,0,0 waypoint for testing
-        self.waypoints = np.array([[0.0, 0.0, 1.570796]])
+        waypoints_zero = np.array([[0.0, 0.0, 0.0]])
+
+        self.waypoints = waypoints_double_square
 
         # PID controller used to smooth out the forward drive acceleration
         # The parameters are Kp, Ki, Kd
@@ -128,16 +149,14 @@ class Hw3Node(Node):
         self.pid = PIDcontroller(0.8, 0.01, 0.005)
         
         self.current_state = np.array([0.0, 0.0, 0.0])
-        # This variable is updated by the localization module
-        # It currently uses AprilTag observations when available,
-        # otherwise it falls back to dead reckoning.
+        # This variable is updated from EKF SLAM pose via TF (odom -> base_link)
         self.obs_current_state = np.array([0.0, 0.0, 0.0])
         
         self.current_waypoint_idx = 0
         self.waypoint_reached = False
-        self.tolerance = 0.15
-        self.angle_tolerance = 0.1
-        
+        self.tolerance = 0.15 # [m]
+        self.angle_tolerance = 0.2 # [rad]
+
         self.last_tag_detection_time = 0.0
         self.using_tag_localization = False
         self.tag_initialized = False
@@ -149,7 +168,7 @@ class Hw3Node(Node):
         self.stage = 'rotate_to_face_selected_waypoint'
         self.prev_stage = self.stage
         self.stage_pid = PIDcontroller(0.8, 0.01, 0.005)
-        self.fixed_rotation_vel = 0.785
+        self.fixed_rotation_vel = 0.700  # 0.785
 
         self.do_nothing_ticks = 0
 
@@ -205,6 +224,11 @@ class Hw3Node(Node):
         Main control loop with three stages: rotate to goal, drive, rotate to orientation
         """
         # EKF SLAM node is authoritative for odom -> base_link TF
+        # Wait for transform to be available (EKF SLAM must be running)
+        if not self.tf_buffer.can_transform('odom', 'base_link', rclpy.time.Time()):
+            # Transform not available yet - skip this iteration
+            return
+        
         # Read robot pose from EKF TF
         transform = self.tf_buffer.lookup_transform(
             'odom', 'base_link', rclpy.time.Time()
@@ -314,11 +338,10 @@ class Hw3Node(Node):
         
         
     def localization_update(self):
-        """Main localization update - tries AprilTag first, then dead reckoning
+        """Localization update - reads pose from EKF SLAM via TF
         
-        
-        This function is called every 0.1s by a timer in the constructor. We will
-        likely place our EKF update logic here.
+        This function is called every 0.1s by a timer in the constructor.
+        The EKF SLAM node handles pose estimation and broadcasts it via TF.
         """
         current_time = time.time()
         tag_detected = False

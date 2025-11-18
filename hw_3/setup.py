@@ -11,7 +11,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/configs', ['configs/apriltags_position.yaml', 'configs/ekf_slam_params.yaml']),
-        ('share/' + package_name + '/launch', ['launch/hw3.launch.py']),
+        ('share/' + package_name + '/launch', ['launch/hw3.launch.py', 'launch/ekf_slam.launch.py']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

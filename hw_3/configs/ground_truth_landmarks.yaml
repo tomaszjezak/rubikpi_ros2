@@ -1,0 +1,29 @@
+# Ground truth landmark positions for SLAM evaluation
+# Format: tag_id, x (meters), y (meters)
+
+landmarks:
+  - tag_id: 0
+    x: 0.8382
+    y: 0.0
+  - tag_id: 1
+    x: 0.8382
+    y: 0.8636
+  - tag_id: 2
+    x: 0.0
+    y: 1.8924
+  - tag_id: 3
+    x: -0.8446
+    y: 1.8924
+  - tag_id: 4
+    x: -1.9685
+    y: 0.8636
+  - tag_id: 5
+    x: -1.9685
+    y: 0.0
+  - tag_id: 6
+    x: -0.8446
+    y: -0.762
+  - tag_id: 7
+    x: 0.0
+    y: -0.762
+
