@@ -10,7 +10,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/configs', ['configs/apriltags_position.yaml', 'configs/ekf_slam_params.yaml']),
+        ('share/' + package_name + '/configs', ['configs/apriltags_position.yaml', 'configs/ekf_slam_params.yaml', 'configs/ground_truth_landmarks.yaml']),
         ('share/' + package_name + '/launch', ['launch/hw4.launch.py', 'launch/ekf_slam.launch.py']),
     ],
     install_requires=['setuptools'],

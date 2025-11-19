@@ -140,7 +140,7 @@ class Hw4Node(Node):
         # 0,0,0 waypoint for testing
         waypoints_zero = np.array([[0.0, 0.0, 0.0]])
 
-        self.waypoints = waypoints_double_square
+        self.waypoints = waypoints_zero
 
         # PID controller used to smooth out the forward drive acceleration
         # The parameters are Kp, Ki, Kd

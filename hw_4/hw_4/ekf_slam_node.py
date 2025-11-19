@@ -14,6 +14,8 @@ import time
 import pickle
 import os
 from pathlib import Path
+import yaml
+from ament_index_python.packages import get_package_share_directory
 
 # Try to import apriltag_msgs, fallback if not available
 try:
@@ -36,9 +38,36 @@ except ImportError:
 
 
 class EKF_SLAM_Node(Node):
+    def load_ground_truth_landmarks(self):
+        """Load ground truth landmarks from YAML file"""
+        try:
+            # Use ROS2 package share directory to find config
+            pkg_share = get_package_share_directory('hw_4')
+            config_path = os.path.join(pkg_share, 'configs', 'ground_truth_landmarks.yaml')
+        except Exception as e:
+            self.get_logger().error(f'Could not find hw_4 package: {e}')
+            return {}
+
+        if not os.path.exists(config_path):
+            self.get_logger().error(f'Landmark config not found at {config_path}')
+            return {}
+
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        landmarks = {}
+        for lm in config['landmarks']:
+            tag_id = lm['tag_id']
+            x = lm['x']
+            y = lm['y']
+            landmarks[tag_id] = (x, y)
+
+        self.get_logger().info(f'Loaded {len(landmarks)} ground truth landmarks from {config_path}')
+        return landmarks
+
     def __init__(self):
         super().__init__('ekf_slam_node')
-        
+
         # Declare parameters
         self.declare_parameter('max_range', 5.0)
         self.declare_parameter('m_dist_threshold', 2.0)
@@ -72,10 +101,38 @@ class EKF_SLAM_Node(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
-        
-        # Initialize EKF state
+
+        # Load ground truth landmarks
+        ground_truth_landmarks = self.load_ground_truth_landmarks()
+
+        # Initialize EKF state with robot + all known landmarks
         self.xEst = np.zeros((ROBOT_STATE_SIZE, 1))  # Start at [0, 0, 0]
-        self.PEst = np.eye(ROBOT_STATE_SIZE) * np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
+
+        # Pre-populate tag_id to landmark index mapping
+        self.tag_id_to_landmark_index = {}
+
+        # Add all known landmarks to state vector
+        landmark_uncertainty = 0.01  # 1cm standard deviation (very confident in landmark positions)
+        for landmark_idx, (tag_id, (lm_x, lm_y)) in enumerate(sorted(ground_truth_landmarks.items())):
+            # Add landmark to state vector
+            self.xEst = np.vstack((self.xEst, np.array([[lm_x], [lm_y]])))
+            # Map tag_id to landmark index
+            self.tag_id_to_landmark_index[tag_id] = landmark_idx
+            self.get_logger().info(f'Pre-loaded landmark: Tag {tag_id} at [{lm_x:.4f}, {lm_y:.4f}]m (index {landmark_idx})')
+
+        # Initialize covariance matrix
+        # Robot part: use parameters
+        robot_cov = np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
+
+        # Landmark part: very small uncertainty (landmarks are known)
+        num_landmarks = len(ground_truth_landmarks)
+        landmark_cov = np.eye(LM_SIZE * num_landmarks) * (landmark_uncertainty ** 2)
+
+        # Build full covariance matrix
+        self.PEst = np.zeros((ROBOT_STATE_SIZE + LM_SIZE * num_landmarks,
+                              ROBOT_STATE_SIZE + LM_SIZE * num_landmarks))
+        self.PEst[0:ROBOT_STATE_SIZE, 0:ROBOT_STATE_SIZE] = robot_cov
+        self.PEst[ROBOT_STATE_SIZE:, ROBOT_STATE_SIZE:] = landmark_cov
         
         # Storage
         self.trajectory_history = []  # Full trajectory at EKF update rate
@@ -100,11 +157,9 @@ class EKF_SLAM_Node(Node):
         # Latest detections
         self.latest_detections = None
         self.latest_detections_time = None
-        
-        # Tag ID to landmark index mapping
-        # Maps AprilTag ID -> landmark index in state vector
-        self.tag_id_to_landmark_index = {}
-        
+
+        # Note: tag_id_to_landmark_index is now initialized earlier with ground truth landmarks
+
         # Subscriptions
         self.cmd_vel_sub = self.create_subscription(
             Twist,
@@ -314,30 +369,10 @@ class EKF_SLAM_Node(Node):
         else:
             # Separate measurements and tag IDs
             tag_ids = [m[0] for m in measurements_with_ids]
-            measurements = np.array([[m[1], m[2]] for m in measurements_with_ids])  # [range, bearing]
-            z = measurements
-            
-            # Map tag IDs to landmark indices using tag ID directly
-            # Known tags: use existing mapping
-            # New tags: assign sequential indices starting from nLM_before
-            landmark_indices = []
-            new_tag_counter = 0
-            
-            for tag_id in tag_ids:
-                if tag_id in self.tag_id_to_landmark_index:
-                    # Known tag: use existing landmark index
-                    landmark_indices.append(self.tag_id_to_landmark_index[tag_id])
-                else:
-                    # New tag: will be created at next available index
-                    landmark_indices.append(nLM_before + new_tag_counter)
-                    new_tag_counter += 1
-            
-            # Log which tags we're processing
-            if len(tag_ids) > 0:
-                new_tags = [tid for tid in tag_ids if tid not in self.tag_id_to_landmark_index]
+            z = np.array([[m[1], m[2]] for m in measurements_with_ids])  # [range, bearing]
 
-                if new_tags:
-                    self.get_logger().info(f'[TAGS] New: {new_tags}')
+            # Map tag IDs to landmark indices - will crash if unknown tag (intentional)
+            landmark_indices = [self.tag_id_to_landmark_index[tag_id] for tag_id in tag_ids]
         
         # Run EKF SLAM with tag ID-based data association
         # Pass is_turning flag to prevent position updates during pure rotation
@@ -351,37 +386,11 @@ class EKF_SLAM_Node(Node):
         # Get robot state and landmark count after update
         robot_state = self.xEst[0:ROBOT_STATE_SIZE].copy()
         nLM_after = calc_n_lm(self.xEst)
-        
-        # Update tag ID to landmark index mapping for new landmarks
-        # EKF SLAM behavior:
-        # - First detection: Creates new landmark in state vector (extends xEst and PEst)
-        # - Re-observation: Updates existing landmark using Kalman filter (improves estimate, reduces uncertainty)
-        if len(measurements_with_ids) > 0:
-            tag_ids = [m[0] for m in measurements_with_ids]
-            
-            # Check for new landmarks (state vector grew)
-            if nLM_after > nLM_before:
-                # Map new tag IDs to newly created landmarks
-                new_tag_index = 0
-                for tag_id in tag_ids:
-                    if tag_id not in self.tag_id_to_landmark_index:
-                        landmark_idx = nLM_before + new_tag_index
-                        self.tag_id_to_landmark_index[tag_id] = landmark_idx
-                        lm = get_landmark_position_from_state(self.xEst, landmark_idx)
-                        self.get_logger().info(f'[NEW LANDMARK] Tag {tag_id} at [{lm[0,0]:.3f}, {lm[1,0]:.3f}]m')
-                        new_tag_index += 1
-                        if new_tag_index >= (nLM_after - nLM_before):
-                            break
-            
-            # Log when we're updating existing landmarks (re-observation)
-            # Note: This happens every time we re-observe a known tag - the EKF updates the landmark estimate
-            # The Kalman filter improves the estimate and reduces uncertainty with each observation
-            known_tags_observed = [tid for tid in tag_ids if tid in self.tag_id_to_landmark_index]
-            if known_tags_observed and nLM_after == nLM_before:
-                # Throttle: only log updates every 10 cycles to avoid spam
-                if self.update_count % 10 == 0:
-                    tag_str = ', '.join([str(tid) for tid in known_tags_observed])
-                    #self.get_logger().info(f'[UPDATE LANDMARKS] Re-observing tags: {tag_str} (improving estimates)')
+
+        # Sanity check: state vector should never grow (all landmarks pre-loaded)
+        if nLM_after != nLM_before:
+            self.get_logger().error(f'[ERROR] State vector changed size! Before: {nLM_before}, After: {nLM_after}')
+            self.get_logger().error('This should never happen with pre-loaded landmarks!')
         
         # Detect robot state changes
         state_change = np.linalg.norm(robot_state - self.prev_robot_state)
