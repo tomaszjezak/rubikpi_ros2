@@ -10,14 +10,14 @@ def generate_launch_description():
     """
     
     # Get package share directory
-    pkg_share = FindPackageShare(package='hw_3').find('hw_3')
+    pkg_share = FindPackageShare(package='hw_4').find('hw_4')
     
     # Path to config file
     config_file = os.path.join(pkg_share, 'configs', 'ekf_slam_params.yaml')
     
     # EKF SLAM node
     ekf_slam_node = Node(
-        package='hw_3',
+        package='hw_4',
         executable='ekf_slam',
         name='ekf_slam',
         output='screen',

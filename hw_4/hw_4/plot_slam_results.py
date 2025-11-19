@@ -275,7 +275,7 @@ def main():
         gt_file = script_dir.parent / 'configs' / 'ground_truth_landmarks.yaml'
         if not gt_file.exists():
             # Try absolute path
-            gt_file = Path('/home/ubuntu/ros2_ws/rubikpi_ros2/hw_3/configs/ground_truth_landmarks.yaml')
+            gt_file = Path('/home/ubuntu/ros2_ws/rubikpi_ros2/hw_4/configs/ground_truth_landmarks.yaml')
         args.gt_file = str(gt_file)
     
     # Load data

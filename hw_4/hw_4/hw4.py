@@ -90,9 +90,9 @@ class PIDcontroller:
             result[0] = 0.0
         return result
 
-class Hw3Node(Node):
+class Hw4Node(Node):
     def __init__(self):
-        super().__init__('hw3_node')
+        super().__init__('hw4_node')
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         
         self.tf_buffer = Buffer()
@@ -419,7 +419,7 @@ class Hw3Node(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = Hw3Node()
+    node = Hw4Node()
     
     try:
         rclpy.spin(node)

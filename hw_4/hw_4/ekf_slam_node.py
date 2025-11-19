@@ -86,15 +86,15 @@ class EKF_SLAM_Node(Node):
         self.is_turning = False  # Flag to detect pure rotation commands
         self.prev_is_turning = False  # Track previous state to detect transitions
         
-        # Waypoint detection - use same waypoints and tolerance as hw3.py
-        # These match the waypoints defined in hw3.py
+        # Waypoint detection - use same waypoints and tolerance as hw4.py
+        # These match the waypoints defined in hw4.py
         self.waypoints = np.array([
             [ 0.000000,  0.850000,  0.0],
             [-0.850000,  0.850000, 1.5708],
             [-0.850000,  0.000000,  3.14159],
             [ 0.000000,  0.000000,  -1.5708],
         ])
-        self.waypoint_tolerance = 0.15  # meters - same as hw3.py tolerance
+        self.waypoint_tolerance = 0.15  # meters - same as hw4.py tolerance
         self.reached_waypoints = set()  # Track which waypoints we've already logged
         
         # Latest detections
@@ -148,7 +148,7 @@ class EKF_SLAM_Node(Node):
         os.makedirs(os.path.dirname(self.data_file_path), exist_ok=True)
         
         # Broadcast initial TF immediately so odom frame exists right away
-        # This ensures other nodes (like hw3.py) can look up odom -> base_link immediately
+        # This ensures other nodes (like hw4.py) can look up odom -> base_link immediately
         self.broadcast_tf()
         
         self.get_logger().info('=' * 70)

@@ -8,7 +8,7 @@ import os
 
 def generate_launch_description():
     """
-    Launch file for hw_3 package.
+    Launch file for hw_4 package.
     Starts nodes in sequence:
     1. robot_vision_camera - camera driver
     2. apriltag_ros - AprilTag detection
@@ -16,8 +16,8 @@ def generate_launch_description():
     4. motor_control - communicates with robot hardware via serial
     5. velocity_mapping - converts Twist commands to motor commands
     6. camera_tf - static tf_node
-    7. hw3 - PID-based waypoint navigation
-    
+    7. hw4 - PID-based waypoint navigation
+
     Note: EKF SLAM is launched separately for debugging
     """
     
@@ -40,7 +40,7 @@ def generate_launch_description():
         period=5.0,
         actions=[
             Node(
-                package='hw_3',
+                package='hw_4',
                 executable='motor_control',
                 name='motor_control',
                 output='screen',
@@ -53,7 +53,7 @@ def generate_launch_description():
         period=5.0,
         actions=[
             Node(
-                package='hw_3',
+                package='hw_4',
                 executable='velocity_mapping',
                 name='velocity_mapping',
                 output='screen',
@@ -63,31 +63,31 @@ def generate_launch_description():
     )
     
     camera_tf = Node(
-        package='hw_3',
+        package='hw_4',
         executable='camera_tf',
         name='camera_tf',
         output='screen',
         emulate_tty=True,
     )
     
-    hw3 = TimerAction(
+    hw4 = TimerAction(
         period=10.0,
         actions=[
             Node(
-                package='hw_3',
-                executable='hw3',
-                name='hw3',
+                package='hw_4',
+                executable='hw4',
+                name='hw4',
                 output='screen',
                 emulate_tty=True,
             )
         ]
     )
-    
+
     return LaunchDescription([
         camera_launch,
         apriltag_launch,
         motor_controller,
         velocity_mapping,
         camera_tf,
-        hw3,
+        hw4,
     ])
