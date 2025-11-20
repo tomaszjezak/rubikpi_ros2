@@ -4,12 +4,12 @@
     max_angular: 0.15
     m_dist_threshold: 2.0
     dt: 0.1
-    process_noise_v: 0.005 #0.0025  # m/s (std) - from empirical drive tests
-    process_noise_w: 0.6 #0.3  # rad/s (std) - from empirical rotation tests
+    process_noise_v: 0.03  # m/s (std) - trust odometry less
+    process_noise_w: 0.8  # rad/s (std) - trust odometry less
     measurement_noise_r: 0.02
     measurement_noise_b: 0.02
     # Starting state confidence
-    state_cov_x: 0.0001 # 95% within +- 2 cm
-    state_cov_y: 0.0001 # 95% within +- 2 cm
-    state_cov_yaw: 0.0003 # 95% within +- 2 degrees
+    state_cov_x: 0.01 # 95% within +- 20 cm
+    state_cov_y: 0.01 # 95% within +- 20 cm
+    state_cov_yaw: 0.01 # 95% within +- 11 degrees
 
