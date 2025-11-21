@@ -1,29 +1,32 @@
 # Ground truth landmark positions for SLAM evaluation
 # Format: tag_id, x (meters), y (meters)
+# Origin is at the corner near tags 5 and 6 (bottom-left)
 
 landmarks:
   - tag_id: 0
-    x: 0.8382
-    y: 0.0
+    x: 2.8067
+    y: 0.7620
   - tag_id: 1
-    x: 0.8382
-    y: 0.8636
+    x: 2.8067
+    y: 1.6256
   - tag_id: 2
-    x: 0.0
-    y: 1.8924
+    x: 1.9685
+    y: 2.6544
   - tag_id: 3
-    x: -0.8446
-    y: 1.8924
+    x: 1.1239
+    y: 2.6544
   - tag_id: 4
-    x: -1.9685
-    y: 0.8636
+    x: 0.0000
+    y: 2.13995
   - tag_id: 5
-    x: -1.9685
-    y: 0.0
+    x: 0.0000
+    y: 0.7620
   - tag_id: 6
-    x: -0.8446
-    y: -0.762
+    x: 1.1239
+
+    
+    y: 0.0000
   - tag_id: 7
-    x: 0.0
-    y: -0.762
+    x: 1.9685
+    y: 0.0000
 

@@ -12,13 +12,8 @@ think about
 
 import math
 import numpy as np
-from scipy.spatial import KDTree
+from scipy.spatial import KDTree  # Still needed for sample_kd_tree in generate_road_map
 
-# Parameters
-
-N_SAMPLE = 1000 # number of sample points to generate on the 10x10 map
-MAX_EDGE_LEN = 14.1 # hypotenuse of grid ie. 14.1 in a 10x10
-N_KNN = 10 # number of edges from one sampled point, for K-Nearest Neighbors to connect
 
 class Node:
     """
@@ -35,12 +30,52 @@ class Node:
                str(self.cost) + "," + str(self.parent_index)
 
 
-def sample_points(sx, sy, gx, gy, rr, workspace_bounds, obstacle_bounds, obstacle_kd_tree, rng):
+def distance_to_box(x, y, obstacle_bounds):
+    """
+    Calculate distance from point (x, y) to nearest edge of box obstacle.
+    
+    Args:
+        x: X coordinate of point
+        y: Y coordinate of point
+        obstacle_bounds: Tuple (min_x, max_x, min_y, max_y) defining box
+    
+    Returns:
+        float: Distance to nearest box edge (0 or negative if inside box)
+    """
+    obs_min_x, obs_max_x, obs_min_y, obs_max_y = obstacle_bounds
+    
+    # Check if point is inside box
+    if obs_min_x <= x <= obs_max_x and obs_min_y <= y <= obs_max_y:
+        # Inside box - return 0 (will be rejected by geometric check anyway)
+        return 0.0
+    
+    # Outside box - distance to nearest edge
+    # Calculate horizontal distance to box
+    if x < obs_min_x:
+        dx = obs_min_x - x  # Left of box
+    elif x > obs_max_x:
+        dx = x - obs_max_x  # Right of box
+    else:
+        dx = 0  # Between left and right edges
+    
+    # Calculate vertical distance to box
+    if y < obs_min_y:
+        dy = obs_min_y - y  # Below box
+    elif y > obs_max_y:
+        dy = y - obs_max_y  # Above box
+    else:
+        dy = 0  # Between top and bottom edges
+    
+    # Distance to nearest edge/corner
+    return math.sqrt(dx*dx + dy*dy)
+
+
+def sample_points(sx, sy, gx, gy, rr, workspace_bounds, obstacle_bounds, rng, n_sample=1000):
     """
     Sample random points in free space... 25% extra credit baby
     Ensure points are collision-free in the obstacle-bounded space.
     These points are used downstream to build the roadmap
-    
+
     Args:
         sx: Start x coordinate [m]
         sy: Start y coordinate [m]
@@ -49,12 +84,12 @@ def sample_points(sx, sy, gx, gy, rr, workspace_bounds, obstacle_bounds, obstacl
         rr: Robot radius [m] - used to check collision-free space
         workspace_bounds: Tuple (min_x, max_x, min_y, max_y) defining workspace
         obstacle_bounds: Tuple (min_x, max_x, min_y, max_y) defining obstacle region
-        obstacle_kd_tree: KDTree object for efficient nearest neighbor queries
         rng: Optional random number generator for reproducibility
-    
+        n_sample: Number of sample points to generate (default: 1000)
+
     Returns:
         sample_x: List of sampled x coordinates (includes start and goal)
-        sample_y: List of sampled y coordinates (includes start and goal)   
+        sample_y: List of sampled y coordinates (includes start and goal)
     """
     # unpack workspace bounds
     min_x, max_x, min_y, max_y = workspace_bounds
@@ -66,19 +101,19 @@ def sample_points(sx, sy, gx, gy, rr, workspace_bounds, obstacle_bounds, obstacl
 
     if rng is None:
         rng = np.random.default_rng()
-    
-    while len(sample_x) <= N_SAMPLE:
+
+    while len(sample_x) <= n_sample:
         tx = (rng.random() * (max_x - min_x)) + min_x
         ty = (rng.random() * (max_y - min_y)) + min_y
 
-        # geomtric check, skip sample if inside obstacle
+        # geometric check, skip sample if inside obstacle
         if obs_min_x <= tx <= obs_max_x and obs_min_y <= ty <= obs_max_y:
             continue
         
-        # KDTree check: ensure that sample is at least 'rr' distance from Middle Obstacle AND Walls
-        dist, index = obstacle_kd_tree.query([tx,ty])
+        # Distance check: ensure that sample is at least 'rr' distance from box obstacle
+        dist = distance_to_box(tx, ty, obstacle_bounds)
 
-        if dist >= rr: # point is safe, at least 'rr' distance from nearest obstacles
+        if dist >= rr:  # point is safe, at least 'rr' distance from nearest obstacles
             sample_x.append(tx)
             sample_y.append(ty)
 
@@ -90,17 +125,26 @@ def sample_points(sx, sy, gx, gy, rr, workspace_bounds, obstacle_bounds, obstacl
 
     return sample_x, sample_y
 
-def is_collision(sx, sy, gx, gy, rr, obstacle_kd_tree):
+def is_collision(sx, sy, gx, gy, rr, obstacle_bounds, max_edge_len=14.1):
     """
     Check if an edge between two points collides with obstacles.
-    
-    This function checks if a straight-line edge from (sx, sy) to (gx, gy) 
+
+    This function checks if a straight-line edge from (sx, sy) to (gx, gy)
     would collide with any obstacles, considering the robot's radius. It does
     this by discretely sampling points along the edge and checking if each
     point is too close to obstacles.
 
+    Args:
+        sx: Start x coordinate [m]
+        sy: Start y coordinate [m]
+        gx: Goal x coordinate [m]
+        gy: Goal y coordinate [m]
+        rr: Robot radius [m]
+        obstacle_bounds: Tuple (min_x, max_x, min_y, max_y) defining box obstacle
+        max_edge_len: Maximum edge length allowed (default: 14.1)
+
     Returns:
-        bool: True if collison detected, False if edge is collision-free
+        bool: True if collision detected, False if edge is collision-free
     """
     x = sx
     y = sy
@@ -109,7 +153,7 @@ def is_collision(sx, sy, gx, gy, rr, obstacle_kd_tree):
     yaw = math.atan2(gy - sy, gx - sx)
     d = math.hypot(dx, dy)
 
-    if d >= MAX_EDGE_LEN:
+    if d >= max_edge_len:
         return True
     
     D = rr # D : step size is robot radius
@@ -117,34 +161,36 @@ def is_collision(sx, sy, gx, gy, rr, obstacle_kd_tree):
 
     # check points along the edge, is there collision
     for i in range(n_step):
-        dist, _ = obstacle_kd_tree.query([x,y])
+        dist = distance_to_box(x, y, obstacle_bounds)
         if dist <= rr:
-            return True # collision with wall/obstacle
-        x += D * math.cos(yaw) # move forward a step (compute if its collision in next iteration of for loop)
+            return True  # collision with wall/obstacle
+        x += D * math.cos(yaw)  # move forward a step
         y += D * math.sin(yaw)
 
     # goal point check
-    dist, _ = obstacle_kd_tree.query([gx, gy])
+    dist = distance_to_box(gx, gy, obstacle_bounds)
     if dist <= rr:
-        return True # collision
+        return True  # collision
     
-    return False # no collision
+    return False  # no collision
 
-def generate_road_map(sample_x, sample_y, rr, obstacle_kd_tree):
+def generate_road_map(sample_x, sample_y, rr, obstacle_bounds, n_knn=10, max_edge_len=14.1):
     """
     Generate a roadmap by connecting sample points with collision-free edges.
-    
-    For each sample point, finds the N_KNN nearest neighbors and connects
+
+    For each sample point, finds the n_knn nearest neighbors and connects
     them if the edge is collision-free.
-    
+
     Args:
         sample_x: List of x coordinates of sampled points
-        sample_y: List of y coordinates of sampled points  
+        sample_y: List of y coordinates of sampled points
         rr: Robot radius [m]
-        obstacle_kd_tree: KDTree for obstacle collision checking
-    
+        obstacle_bounds: Tuple (min_x, max_x, min_y, max_y) defining box obstacle
+        n_knn: Number of nearest neighbors to connect (default: 10)
+        max_edge_len: Maximum edge length allowed (default: 14.1)
+
     Returns:
-        road_map: List of lists, where road_map[i] contains indices of 
+        road_map: List of lists, where road_map[i] contains indices of
                  connected neighbors for sample point i
     """
 
@@ -158,13 +204,13 @@ def generate_road_map(sample_x, sample_y, rr, obstacle_kd_tree):
         edge_id = []
 
         for ii in range(1, len(indices)): # loop through neighbors, start at index 1 (skip point itself)
-            nx = sample_x[indices[ii]] 
+            nx = sample_x[indices[ii]]
             ny = sample_y[indices[ii]]
 
-            if not is_collision(ix, iy, nx, ny, rr, obstacle_kd_tree):
+            if not is_collision(ix, iy, nx, ny, rr, obstacle_bounds, max_edge_len):
                 edge_id.append(indices[ii])
 
-            if len(edge_id) >= N_KNN: # stop onc we've found N_KNN collision-free neighbors
+            if len(edge_id) >= n_knn: # stop once we've found n_knn collision-free neighbors
                 break
 
         road_map.append(edge_id) # add this point's list of connected neighbors to roadmap

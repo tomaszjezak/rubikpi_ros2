@@ -3,14 +3,17 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import TransformStamped
+from nav_msgs.msg import Path
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster
+from prm_planner.srv import GetPRMPath
 import numpy as np
-import os 
+import os
 import yaml
 import time
 import math
 from ament_index_python.packages import get_package_share_directory
 from scipy.spatial.transform import Rotation
+import matplotlib.pyplot as plt
 
 """
 The class of the pid controller for differential drive robot.
@@ -94,63 +97,36 @@ class Hw4Node(Node):
     def __init__(self):
         super().__init__('hw4_node')
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        
+
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
-        
+
         self.odom_frame = 'odom'
         self.base_frame = 'base_link'
-        
+
         self.tag_positions = {}
 
-        # Square drive pattern waypoints (starts by turning left 90 degrees)
-        waypoints_single_square = np.array([
-            [ 0.000000,  0.850000,  0.0],  # Drive to north 0.85m, face east to read tag
-            [-0.850000,  0.850000, 1.5708],  # Drive west 0.85m, turn north to read tag
-            [-0.850000,  0.000000,  3.14159],  # Drive south 0.85m, turn west to read tag
-            [ 0.000000,  0.000000,  -1.5708],  # Drive east 0.85m, turn south to read tag
-        ])
-        # Double square drive pattern waypoints
-        waypoints_double_square = np.vstack((waypoints_single_square, waypoints_single_square))
-        # Octagonal drive pattern
-        waypoints_octagon = np.array([
-            # 0. Drive forward by 0.425. Face up 45 degrees to read tag
-            [ 0.425000, 0.000000, 0.7854],
-            # Now we are on the octagon edge
-            #. 1. Go up by 0.85m. face upwards cuz whatever
-            [ 0.425000, 0.850000, 1.5708],
-            # 2. Go diagonal up-left by sqrt(2)*0.425
-            [ 0.000000, 1.275000, 2.3562],
-            # 3. Go left by 0.85m
-            [-0.850000, 1.275000, 3.14159],
-            # 4. Go diagonal down-left by sqrt(2)*0.425
-            [-1.275000, 0.850000, -2.3562],
-            # 5. Go down by 0.85m
-            [-1.275000, 0.000000, -1.5708],
-            # 6. Go diagonal down-right by sqrt(2)*0.425
-            [-0.850000, -0.425000, -0.7854],
-            # 7. Go right by 0.85m
-            [ 0.000000, -0.425000, 0.0],
-            # 8. Go diagonal up-right by sqrt(2)*0.425
-            [ 0.425000, 0.000000, 0.7854],
-        ])
-        # Double octagonal drive pattern waypoints
-        waypoints_double_octagon = np.vstack((waypoints_octagon, waypoints_octagon))
-        # 0,0,0 waypoint for testing
-        waypoints_zero = np.array([[0.0, 0.0, 0.0]])
+        # Declare parameters for path planning
+        self.declare_parameter('start_x', 0.0)
+        self.declare_parameter('start_y', 0.0)
+        self.declare_parameter('goal_x', 1.0)
+        self.declare_parameter('goal_y', 1.0)
+        self.declare_parameter('use_prm_planner', True)
 
-        self.waypoints = waypoints_zero
+        # Waypoints list - populated from PRM planner service
+        # Format: numpy array of [x, y, theta] where x,y are positions and theta is orientation
+        self.waypoints = np.array([[0.0, 0.0, 0.0]])  # Default fallback
 
         # PID controller used to smooth out the forward drive acceleration
         # The parameters are Kp, Ki, Kd
         # It does not affect the rotational movement, even though the
         # output contains angular velocity as well.
         self.pid = PIDcontroller(0.8, 0.01, 0.005)
-        
-        self.current_state = np.array([0.0, 0.0, 0.0])
+
+        self.current_state = np.array([1.9685, 0.7620, np.pi/2])  # [x, y, yaw] - starts facing upwards
         # This variable is updated from EKF SLAM pose via TF (odom -> base_link)
-        self.obs_current_state = np.array([0.0, 0.0, 0.0])
+        self.obs_current_state = np.array([1.9685, 0.7620, np.pi/2])
         
         self.current_waypoint_idx = 0
         self.waypoint_reached = False
@@ -160,7 +136,11 @@ class Hw4Node(Node):
         self.last_tag_detection_time = 0.0
         self.using_tag_localization = False
         self.tag_initialized = False
-                
+
+        # Request path from PRM planner service if enabled
+        if self.get_parameter('use_prm_planner').get_parameter_value().bool_value:
+            self._request_prm_path()
+
         self.dt = 0.1
         self.control_timer = self.create_timer(self.dt, self.control_loop)
         self.localization_timer = self.create_timer(self.dt, self.localization_update) 
@@ -189,7 +169,163 @@ class Hw4Node(Node):
         qz = cr * cp * sy - sr * sp * cy
         
         return qx, qy, qz, qw
+
+    def _request_prm_path(self):
+        """
+        Request a path from the PRM planner service and populate waypoints list.
+        This is called once during initialization.
+        """
+        # Get start and goal from parameters
+        start_x = self.get_parameter('start_x').get_parameter_value().double_value
+        start_y = self.get_parameter('start_y').get_parameter_value().double_value
+        goal_x = self.get_parameter('goal_x').get_parameter_value().double_value
+        goal_y = self.get_parameter('goal_y').get_parameter_value().double_value
+
+        self.get_logger().info(
+            f'Requesting PRM path from ({start_x:.3f}, {start_y:.3f}) '
+            f'to ({goal_x:.3f}, {goal_y:.3f})'
+        )
+
+        # Create service client
+        prm_client = self.create_client(GetPRMPath, 'get_prm_path')
+
+        # Wait for service to be available (10 second timeout)
+        if not prm_client.wait_for_service(timeout_sec=10.0):
+            self.get_logger().error(
+                'PRM planner service not available! Using fallback waypoint [0,0,0]'
+            )
+            self.waypoints = np.array([[0.0, 0.0, 0.0]])
+            return
+
+        # Create request
+        request = GetPRMPath.Request()
+        request.start_x = start_x
+        request.start_y = start_y
+        request.goal_x = goal_x
+        request.goal_y = goal_y
+
+        # Call service synchronously
+        future = prm_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=30.0)
+
+        if future.result() is not None:
+            response = future.result()
+            if response.success:
+                # Log received path plan with first few elements
+                path_len = len(response.path_x)
+                first_few = min(3, path_len)
+                path_preview = ', '.join([f'({response.path_x[i]:.3f}, {response.path_y[i]:.3f})' for i in range(first_few)])
+                self.get_logger().info(
+                    f'Received path plan: {path_len} points. First {first_few}: [{path_preview}]'
+                )
+                # Plot the path plan
+                self._plot_path_plan(response.path_x, response.path_y, start_x, start_y, goal_x, goal_y)
+                # Convert path to waypoints with orientations
+                self._convert_path_to_waypoints(response.path_x, response.path_y)
+            else:
+                self.get_logger().error(
+                    f'PRM path planning failed: {response.message}'
+                )
+                self.waypoints = np.array([[0.0, 0.0, 0.0]])
+        else:
+            self.get_logger().error('PRM service call failed or timed out')
+            self.waypoints = np.array([[0.0, 0.0, 0.0]])
+
+    def _plot_path_plan(self, path_x, path_y, start_x, start_y, goal_x, goal_y):
+        """
+        Plot the planned path with workspace and obstacle bounds for visualization.
+        
+        Args:
+            path_x: List of x coordinates
+            path_y: List of y coordinates
+            start_x: Start x coordinate
+            start_y: Start y coordinate
+            goal_x: Goal x coordinate
+            goal_y: Goal y coordinate
+        """
+        try:
+            fig, ax = plt.subplots(figsize=(10, 10))
+            
+            # Workspace bounds (from PRM planner defaults)
+            workspace_bounds = [0.0, 2.8067, 0.0, 2.6544]
+            obstacle_bounds = [1.3208, 1.6383, 1.0414, 1.4541]
+            
+            # Draw workspace
+            ws_min_x, ws_max_x, ws_min_y, ws_max_y = workspace_bounds
+            ax.add_patch(plt.Rectangle((ws_min_x, ws_min_y), 
+                                      ws_max_x - ws_min_x, ws_max_y - ws_min_y,
+                                      fill=False, edgecolor='gray', linestyle='--', linewidth=1, label='Workspace'))
+            
+            # Draw obstacle box
+            obs_min_x, obs_max_x, obs_min_y, obs_max_y = obstacle_bounds
+            ax.add_patch(plt.Rectangle((obs_min_x, obs_min_y),
+                                      obs_max_x - obs_min_x, obs_max_y - obs_min_y,
+                                      fill=True, facecolor='red', alpha=0.3, edgecolor='red', linewidth=2, label='Obstacle'))
+            
+            # Plot path
+            if len(path_x) > 0:
+                ax.plot(path_x, path_y, 'b-o', linewidth=2, markersize=4, label='Planned Path', zorder=3)
+                # Mark start and goal
+                ax.plot(path_x[0], path_y[0], 'go', markersize=10, label='Start', zorder=4)
+                ax.plot(path_x[-1], path_y[-1], 'ro', markersize=10, label='Goal', zorder=4)
+            
+            # Also plot requested start/goal (in case they differ from path endpoints)
+            ax.plot(start_x, start_y, 'g*', markersize=15, label='Requested Start', zorder=5)
+            ax.plot(goal_x, goal_y, 'r*', markersize=15, label='Requested Goal', zorder=5)
+            
+            ax.set_xlabel('X (m)')
+            ax.set_ylabel('Y (m)')
+            ax.set_title(f'PRM Path Plan ({len(path_x)} waypoints)')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            ax.set_aspect('equal')
+            ax.set_xlim(ws_min_x - 0.1, ws_max_x + 0.1)
+            ax.set_ylim(ws_min_y - 0.1, ws_max_y + 0.1)
+            
+            plt.tight_layout()
+            plt.savefig('/tmp/prm_path_plan.png', dpi=150, bbox_inches='tight')
+            self.get_logger().info('Path plan saved to /tmp/prm_path_plan.png')
+            plt.close(fig)
+        except Exception as e:
+            self.get_logger().warn(f'Failed to plot path: {e}')
     
+    def _convert_path_to_waypoints(self, path_x, path_y):
+        """
+        Convert PRM path (x, y coordinates) to waypoints with orientations.
+        Each waypoint faces the direction of travel to the next point.
+
+        Args:
+            path_x: List of x coordinates
+            path_y: List of y coordinates
+        """
+        if len(path_x) == 0 or len(path_y) == 0:
+            self.waypoints = np.array([[0.0, 0.0, 0.0]])
+            return
+
+        waypoints_list = []
+
+        for i in range(len(path_x)):
+            x = path_x[i]
+            y = path_y[i]
+
+            # Calculate orientation to face next waypoint
+            if i < len(path_x) - 1:
+                # Not the last point - face toward next point
+                delta_x = path_x[i + 1] - x
+                delta_y = path_y[i + 1] - y
+                theta = np.arctan2(delta_y, delta_x)
+            else:
+                # Last point - keep the same orientation as the previous waypoint
+                if len(waypoints_list) > 0:
+                    theta = waypoints_list[-1][2]
+                else:
+                    theta = 0.0
+
+            waypoints_list.append([x, y, theta])
+
+        self.waypoints = np.array(waypoints_list)
+        self.get_logger().info(f'Converted path to {len(self.waypoints)} waypoints')
+
     def get_desired_heading_to_goal(self, current_wp):
         """
         Get the desired heading to face towards (or away from) the goal
@@ -250,7 +386,7 @@ class Hw4Node(Node):
         
         # Dead check:
         if self.prev_stage != self.stage:
-            self.do_nothing_ticks = 20
+            self.do_nothing_ticks = 2
             self.prev_stage = self.stage
         if self.do_nothing_ticks > 0:
             self.do_nothing_ticks -= 1
@@ -268,19 +404,19 @@ class Hw4Node(Node):
 
         current_wp = self.waypoints[self.current_waypoint_idx]
         
-        # log the current waypoint and state
-        self.get_logger().info(
-            f'Current waypoint {self.current_waypoint_idx}: '
-            f'pos=({current_wp[0]:.3f}, {current_wp[1]:.3f}), yaw={current_wp[2]:.3f} | '
-            f'Robot pos=({self.current_state[0]:.3f}, {self.current_state[1]:.3f}), '
-            f'yaw={self.current_state[2]:.3f}'
-        )
+        # Track previous stage to only log on changes
+        prev_stage = getattr(self, '_prev_stage', None)
 
         if not self.waypoint_reached:
             self.pid.setTarget(current_wp)
             self.waypoint_reached = True
             self.stage = 'rotate_to_face_selected_waypoint'
             self.stage_pid.setTarget(current_wp)
+            # Log target waypoint when starting new waypoint
+            self.get_logger().info(
+                f'Targeting waypoint {self.current_waypoint_idx}: '
+                f'pos=({current_wp[0]:.3f}, {current_wp[1]:.3f}), yaw={np.degrees(current_wp[2]):.1f}°'
+            )
 
         delta_x = current_wp[0] - self.current_state[0]
         delta_y = current_wp[1] - self.current_state[1]
@@ -295,17 +431,23 @@ class Hw4Node(Node):
             
             if abs(heading_error) < 0.05:
                 # Switch to DRIVE
+                if prev_stage != 'drive':
+                    self.get_logger().info(f'Stage: {self.stage} -> drive')
                 self.stage = 'drive'
                 twist_msg.angular.z = 0.0
             else:
+                if prev_stage != self.stage:
+                    self.get_logger().info(f'Stage: {self.stage}')
                 twist_msg.angular.z = float(self.get_rotation_direction(heading_error))
         
         # Stage 2: Drive towards the selected waypoint
         elif self.stage == 'drive':
             position_error = np.sqrt(delta_x**2 + delta_y**2)
             if position_error < self.tolerance:
-                # We are close enough to the waypoint, switch to final orientation stage
-                self.stage = 'rotate_to_final_orientation'
+                # We are close enough to the waypoint, mark it as reached
+                self.get_logger().info(f'Waypoint {self.current_waypoint_idx} reached!')
+                self.current_waypoint_idx += 1
+                self.waypoint_reached = False
                 twist_msg.linear.x = 0.0
             else:
                 # Still far away, keep driving
@@ -314,24 +456,16 @@ class Hw4Node(Node):
                 heading_error = (heading_error + np.pi) % (2 * np.pi) - np.pi
                 if abs(heading_error) > 0.2:
                     # We are pointing too far off course, need to rotate first
+                    if prev_stage != 'rotate_to_face_selected_waypoint':
+                        self.get_logger().info(f'Stage: {self.stage} -> rotate_to_face_selected_waypoint')
                     self.stage = 'rotate_to_face_selected_waypoint'
                     twist_msg.linear.x = 0.0
                 else:
                     update_value = self.pid.update(self.current_state)
                     twist_msg.linear.x = float(update_value[0])
-        
-        # Stage 3: Rotate to the selected waypoint's final orientation
-        elif self.stage == 'rotate_to_final_orientation':
-            heading_error = current_wp[2] - self.current_state[2]
-            heading_error = (heading_error + np.pi) % (2 * np.pi) - np.pi
-            if abs(heading_error) < self.angle_tolerance:
-                # We are within tolerance of final orientation, mark waypoint reached
-                self.current_waypoint_idx += 1
-                self.waypoint_reached = False
-                twist_msg.angular.z = 0.0
-            else:
-                # Rotate constant speed towards final orientation
-                twist_msg.angular.z = float(self.get_rotation_direction(heading_error))
+
+        # Store current stage for next iteration
+        self._prev_stage = self.stage
         
         # EKF SLAM node handles pose estimation via TF
         self.cmd_vel_pub.publish(twist_msg)

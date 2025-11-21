@@ -6,17 +6,12 @@ Main path planning node that integrates PRM algorithm with ROS2
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, Point
-from nav_msgs.msg import Path
-from std_msgs.msg import Header
-from scipy.spatial import KDTree
-import numpy as np
 
-# import prm core
-from .prm_core import (
-        sample_points, generate_road_map, dijkstra_planning,
-        N_SAMPLE, N_KNN, MAX_EDGE_LEN
-    )
+# import prm core - no KDTree needed!
+from prm_planner.prm_core import sample_points, generate_road_map, dijkstra_planning
+
+# import service
+from prm_planner.srv import GetPRMPath
 
 class PRMPlannerNode(Node):
     def __init__(self):
@@ -25,11 +20,10 @@ class PRMPlannerNode(Node):
         # Declare ROS2 parameters
         self.declare_parameter('n_sample', 1000)
         self.declare_parameter('n_knn', 10)
-        self.declare_parameter('max_edge_len', 14.1)
-        self.declare_parameter('robot_radius', 0.5)
-        self.declare_parameter('workspace_bounds', [0.0, 10.0, 0.0, 10.0])  # [min_x, max_x, min_y, max_y]
-        self.declare_parameter('obstacle_bounds', [4.75, 5.25, 4.75, 5.25])  # [min_x, max_x, min_y, max_y]
-        # these numbers are dum ^ because i should be thinking in meters, we can measure and decide tomorrow
+        self.declare_parameter('max_edge_len', 3.5)  # Max edge ~diagonal of arena
+        self.declare_parameter('robot_radius', 0.1)  # ~10cm robot radius (adjust as needed)
+        self.declare_parameter('workspace_bounds', [0.0, 2.8067, 0.0, 2.6544])  # Actual arena bounds
+        self.declare_parameter('obstacle_bounds', [1.3208, 1.6383, 1.0414, 1.4541])  # Measured: 52" from left, 11" above Tag 5, 12.5"×16.25"
 
         # Get parameters
         self.n_sample = self.get_parameter('n_sample').get_parameter_value().integer_value
@@ -38,3 +32,99 @@ class PRMPlannerNode(Node):
         self.robot_radius = self.get_parameter('robot_radius').get_parameter_value().double_value
         workspace_bounds = self.get_parameter('workspace_bounds').get_parameter_value().double_array_value
         obstacle_bounds = self.get_parameter('obstacle_bounds').get_parameter_value().double_array_value
+
+        self.workspace_bounds = tuple(workspace_bounds)
+        self.obstacle_bounds = tuple(obstacle_bounds)
+
+        # Create service server
+        self.service = self.create_service(
+            GetPRMPath,
+            'get_prm_path',
+            self.plan_path_callback
+        )
+
+        self.get_logger().info('PRM Planner Node initialized')
+        self.get_logger().info(f'Workspace: {self.workspace_bounds}, Obstacle: {self.obstacle_bounds}')
+        self.get_logger().info('Service available at: get_prm_path')
+
+    def plan_path_callback(self, request, response):
+        """Service callback to plan a path from start to goal"""
+        sx = request.start_x
+        sy = request.start_y
+        gx = request.goal_x
+        gy = request.goal_y
+
+        self.get_logger().info(f'Service request: Planning from ({sx:.2f}, {sy:.2f}) to ({gx:.2f}, {gy:.2f})')
+
+        try:
+            # Call prm_core functions to plan path
+            rx, ry = self._plan_path(sx, sy, gx, gy)
+
+            if len(rx) == 0:
+                response.success = False
+                response.message = "No path found"
+                self.get_logger().warn('No path found')
+                return response
+
+            # Convert rx, ry to response format (already in goal->start order, reverse for start->goal)
+            response.path_x = list(reversed(rx))
+            response.path_y = list(reversed(ry))
+            response.success = True
+            response.message = f"Path found with {len(rx)} waypoints"
+
+            self.get_logger().info(f'Path planned successfully: {len(rx)} waypoints')
+            return response
+
+        except Exception as e:
+            self.get_logger().error(f'Planning error: {e}')
+            import traceback
+            self.get_logger().error(traceback.format_exc())
+            response.success = False
+            response.message = f"Planning error: {str(e)}"
+            return response
+
+    def _plan_path(self, sx, sy, gx, gy):
+        """
+        Call prm_core functions to plan path.
+        
+        Args:
+            sx: Start x coordinate
+            sy: Start y coordinate
+            gx: Goal x coordinate
+            gy: Goal y coordinate
+        
+        Returns:
+            Tuple (rx, ry) - path coordinates in goal->start order, or ([], []) if no path
+        """
+        # Call prm_core functions - obstacle_bounds is enough, no KDTree!
+        sample_x, sample_y = sample_points(
+            sx, sy, gx, gy, self.robot_radius,
+            self.workspace_bounds, self.obstacle_bounds,
+            rng=None, n_sample=self.n_sample
+        )
+
+        road_map = generate_road_map(
+            sample_x, sample_y, self.robot_radius,
+            self.obstacle_bounds, n_knn=self.n_knn, max_edge_len=self.max_edge_len
+        )
+
+        rx, ry = dijkstra_planning(sx, sy, gx, gy, road_map, sample_x, sample_y)
+
+        return rx, ry
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = PRMPlannerNode()
+    
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

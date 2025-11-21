@@ -12,13 +12,10 @@ def generate_launch_description():
     Starts nodes in sequence:
     1. robot_vision_camera - camera driver
     2. apriltag_ros - AprilTag detection
-    3. [0.5s delay]
-    4. motor_control - communicates with robot hardware via serial
-    5. velocity_mapping - converts Twist commands to motor commands
-    6. camera_tf - static tf_node
-    7. hw4 - PID-based waypoint navigation
-
-    Note: EKF SLAM is launched separately for debugging
+    3. camera_tf - static tf_node
+    4. [5s delay] motor_control, velocity_mapping, ekf_slam_node
+    5. [8s delay] prm_planner_node - path planning service
+    6. [10s delay] hw4 - PID-based waypoint navigation with PRM integration
     """
     
     # Get package paths
@@ -69,7 +66,33 @@ def generate_launch_description():
         output='screen',
         emulate_tty=True,
     )
-    
+
+    ekf_slam = TimerAction(
+        period=5.0,
+        actions=[
+            Node(
+                package='hw_4',
+                executable='ekf_slam',
+                name='ekf_slam_node',
+                output='screen',
+                emulate_tty=True,
+            )
+        ]
+    )
+
+    prm_planner = TimerAction(
+        period=8.0,
+        actions=[
+            Node(
+                package='prm_planner',
+                executable='prm_planner_node',
+                name='prm_planner_node',
+                output='screen',
+                emulate_tty=True,
+            )
+        ]
+    )
+
     hw4 = TimerAction(
         period=10.0,
         actions=[
@@ -79,6 +102,13 @@ def generate_launch_description():
                 name='hw4',
                 output='screen',
                 emulate_tty=True,
+                parameters=[{
+                    'start_x': 1.9685,  # Robot at old (0,0) = new (1.9685, 0.762)
+                    'start_y': 0.7620,
+                    'goal_x': 0.5588,   # 22" to the right of Tag 4
+                    'goal_y': 2.1256,   # +0.5m in y direction from previous
+                    'use_prm_planner': True,  # Enable PRM path planning
+                }]
             )
         ]
     )
@@ -86,8 +116,10 @@ def generate_launch_description():
     return LaunchDescription([
         camera_launch,
         apriltag_launch,
+        camera_tf,
         motor_controller,
         velocity_mapping,
-        camera_tf,
+        ekf_slam,
+        prm_planner,
         hw4,
     ])

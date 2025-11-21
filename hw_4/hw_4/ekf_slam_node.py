@@ -106,7 +106,9 @@ class EKF_SLAM_Node(Node):
         ground_truth_landmarks = self.load_ground_truth_landmarks()
 
         # Initialize EKF state with robot + all known landmarks
-        self.xEst = np.zeros((ROBOT_STATE_SIZE, 1))  # Start at [0, 0, 0]
+        # Robot starts at old (0,0) = new (1.9685, 0.7620) in transformed coordinate system
+        # Initial yaw = π/2 (90°) to face upwards (positive Y direction)
+        self.xEst = np.array([[1.9685], [0.7620], [np.pi/2]])  # [x, y, yaw]
 
         # Pre-populate tag_id to landmark index mapping
         self.tag_id_to_landmark_index = {}
@@ -192,7 +194,7 @@ class EKF_SLAM_Node(Node):
         self.trajectory_log_timer = self.create_timer(1.0, self.log_trajectory_1hz)
         
         # Track previous values for change detection
-        self.prev_robot_state = np.array([[0.0], [0.0], [0.0]])
+        self.prev_robot_state = np.array([[1.9685], [0.7620], [np.pi/2]])
         self.update_count = 0
         
         # Data file path for saving
@@ -206,10 +208,11 @@ class EKF_SLAM_Node(Node):
         # This ensures other nodes (like hw4.py) can look up odom -> base_link immediately
         self.broadcast_tf()
         
-        self.get_logger().info('=' * 70)
-        self.get_logger().info('EKF SLAM Node initialized')
-        self.get_logger().info(f'Update period: {self.dt}s | Max range: {self.max_range}m | Threshold: {self.m_dist_threshold}')
-        self.get_logger().info('=' * 70)
+        # EKF SLAM initialization logs commented out
+        # self.get_logger().info('=' * 70)
+        # self.get_logger().info('EKF SLAM Node initialized')
+        # self.get_logger().info(f'Update period: {self.dt}s | Max range: {self.max_range}m | Threshold: {self.m_dist_threshold}')
+        # self.get_logger().info('=' * 70)
     
     def cmd_vel_callback(self, msg):
         """Store latest control input and detect turn commands"""
@@ -226,8 +229,8 @@ class EKF_SLAM_Node(Node):
         if abs(msg.linear.x) < linear_threshold and abs(msg.angular.z) > angular_threshold:
             self.is_turning = True
             # Log when we first detect turning (transition from False to True)
-            if not self.prev_is_turning:
-                self.get_logger().info(f'[TURN DETECTED] Pure rotation command: v={msg.linear.x:.3f}m/s, ω={math.degrees(msg.angular.z):.2f}°/s')
+            # if not self.prev_is_turning:
+            #     self.get_logger().info(f'[TURN DETECTED] Pure rotation command: v={msg.linear.x:.3f}m/s, ω={math.degrees(msg.angular.z):.2f}°/s')
         else:
             self.is_turning = False
     
@@ -265,7 +268,7 @@ class EKF_SLAM_Node(Node):
                     float(robot_yaw)
                 ))
                 self.reached_waypoints.add(waypoint_idx)
-                self.get_logger().info(f'[WAYPOINT REACHED] Waypoint {waypoint_idx} at [{robot_x:.3f}, {robot_y:.3f}], yaw={math.degrees(robot_yaw):.1f}°')
+                # self.get_logger().info(f'[WAYPOINT REACHED] Waypoint {waypoint_idx} at [{robot_x:.3f}, {robot_y:.3f}], yaw={math.degrees(robot_yaw):.1f}°')
                 break  # Only log one waypoint per check
     
     def log_trajectory_1hz(self):
@@ -468,73 +471,77 @@ class EKF_SLAM_Node(Node):
     
     def log_status(self, robot_state, u, z, nLM):
         """Log comprehensive status update"""
-        self.get_logger().info('-' * 70)
-        self.get_logger().info(f'[EKF STATUS] Update #{self.update_count} | Runtime: {self.update_count * self.dt:.1f}s')
-        self.get_logger().info(f'  Robot Pose: x={robot_state[0,0]:.3f}m, y={robot_state[1,0]:.3f}m, yaw={math.degrees(robot_state[2,0]):.1f}°')
-        self.get_logger().info(f'  Control: v={u[0,0]:.3f}m/s, ω={math.degrees(u[1,0]):.1f}°/s')
-        self.get_logger().info(f'  Measurements: {len(z)} tag(s) in this update')
-        self.get_logger().info(f'  Landmarks: {nLM} total')
-        
-        # Log landmark positions and covariance
-        if nLM > 0:
-            self.get_logger().info('  Landmark Positions and Covariances:')
-            # Sort by tag ID for consistent output
-            tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
-            for tag_id in tag_id_list:
-                landmark_idx = self.tag_id_to_landmark_index[tag_id]
-                lm = get_landmark_position_from_state(self.xEst, landmark_idx)
-                # Get covariance for this landmark
-                lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
-                cov_xx = self.PEst[lm_start_idx, lm_start_idx]
-                cov_yy = self.PEst[lm_start_idx + 1, lm_start_idx + 1]
-                cov_xy = self.PEst[lm_start_idx, lm_start_idx + 1]
-                std_x = math.sqrt(cov_xx)
-                std_y = math.sqrt(cov_yy)
-                # Calculate correlation coefficient
-                correlation = cov_xy / (std_x * std_y) if (std_x * std_y) > 0 else 0.0
-                # Calculate 2σ uncertainty ellipse semi-axes (95% confidence)
-                eigenvals, eigenvecs = np.linalg.eigh(np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]]))
-                semi_major = 2.0 * math.sqrt(max(eigenvals))  # 2σ
-                semi_minor = 2.0 * math.sqrt(min(eigenvals))  # 2σ
-                self.get_logger().info(f'    Tag {tag_id}: pos=[{lm[0,0]:.4f}, {lm[1,0]:.4f}]m')
-                self.get_logger().info(f'      Covariance: σ_x={std_x:.4f}m, σ_y={std_y:.4f}m, σ_xy={cov_xy:.6f}')
-                self.get_logger().info(f'      Correlation: {correlation:.4f}, 2σ ellipse: [{semi_major:.4f}, {semi_minor:.4f}]m')
-        
-        # Log robot pose uncertainty
-        robot_cov_xx = self.PEst[0, 0]
-        robot_cov_yy = self.PEst[1, 1]
-        robot_cov_yaw = self.PEst[2, 2]
-        self.get_logger().info(f'  Robot Uncertainty: σ_x={math.sqrt(robot_cov_xx):.3f}m, σ_y={math.sqrt(robot_cov_yy):.3f}m, σ_yaw={math.degrees(math.sqrt(robot_cov_yaw)):.1f}°')
-        self.get_logger().info('-' * 70)
+        # EKF SLAM logs commented out to reduce spam
+        # self.get_logger().info('-' * 70)
+        # self.get_logger().info(f'[EKF STATUS] Update #{self.update_count} | Runtime: {self.update_count * self.dt:.1f}s')
+        # self.get_logger().info(f'  Robot Pose: x={robot_state[0,0]:.3f}m, y={robot_state[1,0]:.3f}m, yaw={math.degrees(robot_state[2,0]):.1f}°')
+        # self.get_logger().info(f'  Control: v={u[0,0]:.3f}m/s, ω={math.degrees(u[1,0]):.1f}°/s')
+        # self.get_logger().info(f'  Measurements: {len(z)} tag(s) in this update')
+        # self.get_logger().info(f'  Landmarks: {nLM} total')
+        # 
+        # # Log landmark positions and covariance
+        # if nLM > 0:
+        #     self.get_logger().info('  Landmark Positions and Covariances:')
+        #     # Sort by tag ID for consistent output
+        #     tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
+        #     for tag_id in tag_id_list:
+        #         landmark_idx = self.tag_id_to_landmark_index[tag_id]
+        #         lm = get_landmark_position_from_state(self.xEst, landmark_idx)
+        #         # Get covariance for this landmark
+        #         lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
+        #         cov_xx = self.PEst[lm_start_idx, lm_start_idx]
+        #         cov_yy = self.PEst[lm_start_idx + 1, lm_start_idx + 1]
+        #         cov_xy = self.PEst[lm_start_idx, lm_start_idx + 1]
+        #         std_x = math.sqrt(cov_xx)
+        #         std_y = math.sqrt(cov_yy)
+        #         # Calculate correlation coefficient
+        #         correlation = cov_xy / (std_x * std_y) if (std_x * std_y) > 0 else 0.0
+        #         # Calculate 2σ uncertainty ellipse semi-axes (95% confidence)
+        #         eigenvals, eigenvecs = np.linalg.eigh(np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]]))
+        #         semi_major = 2.0 * math.sqrt(max(eigenvals))  # 2σ
+        #         semi_minor = 2.0 * math.sqrt(min(eigenvals))  # 2σ
+        #         self.get_logger().info(f'    Tag {tag_id}: pos=[{lm[0,0]:.4f}, {lm[1,0]:.4f}]m')
+        #         self.get_logger().info(f'      Covariance: σ_x={std_x:.4f}m, σ_y={std_y:.4f}m, σ_xy={cov_xy:.6f}')
+        #         self.get_logger().info(f'      Correlation: {correlation:.4f}, 2σ ellipse: [{semi_major:.4f}, {semi_minor:.4f}]m')
+        # 
+        # # Log robot pose uncertainty
+        # robot_cov_xx = self.PEst[0, 0]
+        # robot_cov_yy = self.PEst[1, 1]
+        # robot_cov_yaw = self.PEst[2, 2]
+        # self.get_logger().info(f'  Robot Uncertainty: σ_x={math.sqrt(robot_cov_xx):.3f}m, σ_y={math.sqrt(robot_cov_yy):.3f}m, σ_yaw={math.degrees(math.sqrt(robot_cov_yaw)):.1f}°')
+        # self.get_logger().info('-' * 70)
+        pass
     
     def print_state_vector(self):
         """Print the current state vector in a readable format"""
-        nLM = calc_n_lm(self.xEst)
-        
-        self.get_logger().info('=' * 70)
-        self.get_logger().info('[STATE VECTOR]')
-        
-        # Robot state
-        robot_x = self.xEst[0, 0]
-        robot_y = self.xEst[1, 0]
-        robot_yaw = self.xEst[2, 0]
-        self.get_logger().info(f'  Robot: x={robot_x:.4f}m, y={robot_y:.4f}m, yaw={math.degrees(robot_yaw):.2f}°')
-        
-        # Landmarks (sorted by tag ID)
-        if nLM > 0:
-            self.get_logger().info(f'  Landmarks ({nLM} total):')
-            tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
-            for tag_id in tag_id_list:
-                landmark_idx = self.tag_id_to_landmark_index[tag_id]
-                lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
-                lm_x = self.xEst[lm_start_idx, 0]
-                lm_y = self.xEst[lm_start_idx + 1, 0]
-                self.get_logger().info(f'    Tag {tag_id}: x={lm_x:.4f}m, y={lm_y:.4f}m')
-        
-        # State vector size
-        state_size = len(self.xEst)
-        self.get_logger().info(f'  State vector size: {state_size} (robot: {ROBOT_STATE_SIZE}, landmarks: {state_size - ROBOT_STATE_SIZE})')
-        self.get_logger().info('=' * 70)
+        # EKF SLAM logs commented out to reduce spam
+        # nLM = calc_n_lm(self.xEst)
+        # 
+        # self.get_logger().info('=' * 70)
+        # self.get_logger().info('[STATE VECTOR]')
+        # 
+        # # Robot state
+        # robot_x = self.xEst[0, 0]
+        # robot_y = self.xEst[1, 0]
+        # robot_yaw = self.xEst[2, 0]
+        # self.get_logger().info(f'  Robot: x={robot_x:.4f}m, y={robot_y:.4f}m, yaw={math.degrees(robot_yaw):.2f}°')
+        # 
+        # # Landmarks (sorted by tag ID)
+        # if nLM > 0:
+        #     self.get_logger().info(f'  Landmarks ({nLM} total):')
+        #     tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
+        #     for tag_id in tag_id_list:
+        #         landmark_idx = self.tag_id_to_landmark_index[tag_id]
+        #         lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
+        #         lm_x = self.xEst[lm_start_idx, 0]
+        #         lm_y = self.xEst[lm_start_idx + 1, 0]
+        #         self.get_logger().info(f'    Tag {tag_id}: x={lm_x:.4f}m, y={lm_y:.4f}m')
+        # 
+        # # State vector size
+        # state_size = len(self.xEst)
+        # self.get_logger().info(f'  State vector size: {state_size} (robot: {ROBOT_STATE_SIZE}, landmarks: {state_size - ROBOT_STATE_SIZE})')
+        # self.get_logger().info('=' * 70)
+        pass
     
     def log_landmark_covariances(self):
         """Log detailed covariance information for all landmarks"""
