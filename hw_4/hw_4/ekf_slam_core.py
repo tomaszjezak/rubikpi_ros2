@@ -395,8 +395,9 @@ def ekf_slam(xEst, PEst, u, z, dt, Q, R, Cx, m_dist_th, landmark_indices=None, i
 
             # FREEZE LANDMARKS: Only update robot pose (first 3 elements)
             # Zero out landmark updates to keep them fixed at initial positions
-            if len(update) > ROBOT_STATE_SIZE:
-                update[ROBOT_STATE_SIZE:] = 0
+            # COMMENTED OUT to allow landmark updates and reduce jumping
+            # if len(update) > ROBOT_STATE_SIZE:
+            #     update[ROBOT_STATE_SIZE:] = 0
 
             # Apply update
             xEst = xEst + update

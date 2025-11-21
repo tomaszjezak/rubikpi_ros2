@@ -1,13 +1,13 @@
 /**:
   ros__parameters:
-    max_range: 1.35
+    max_range: 0.9
     max_angular: 0.15
     m_dist_threshold: 2.0
     dt: 0.1
-    process_noise_v: 0.2  # m/s (std) - 20x for testing
-    process_noise_w: 4.0  # rad/s (std) - 20x for testing
-    measurement_noise_r: 1.0  # 20x for testing
-    measurement_noise_b: 1.0  # 20x for testing
+    process_noise_v: 0.015  # m/s (std) - trust odometry even more
+    process_noise_w: 0.2  # rad/s (std) - trust odometry even more
+    measurement_noise_r: 1.2  # extremely high = extremely smooth tag corrections
+    measurement_noise_b: 1.2  # extremely high = extremely smooth tag corrections
     # Starting state confidence
     state_cov_x: 0.01 # 95% within +- 20 cm
     state_cov_y: 0.01 # 95% within +- 20 cm

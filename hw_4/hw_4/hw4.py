@@ -248,7 +248,7 @@ class Hw4Node(Node):
             
             # Workspace bounds (from PRM planner defaults)
             workspace_bounds = [0.0, 2.8067, 0.0, 2.6544]
-            obstacle_bounds = [1.3208, 1.6383, 1.0414, 1.4541]
+            obstacle_bounds = [1.336675, 1.654175, 1.003300, 1.416000]
             
             # Draw workspace
             ws_min_x, ws_max_x, ws_min_y, ws_max_y = workspace_bounds

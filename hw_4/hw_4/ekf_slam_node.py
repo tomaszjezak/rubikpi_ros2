@@ -114,7 +114,7 @@ class EKF_SLAM_Node(Node):
         self.tag_id_to_landmark_index = {}
 
         # Add all known landmarks to state vector
-        landmark_uncertainty = 0.01  # 1cm standard deviation (very confident in landmark positions)
+        landmark_uncertainty = 0.1  # 10cm standard deviation (allow some landmark uncertainty to reduce jumping)
         for landmark_idx, (tag_id, (lm_x, lm_y)) in enumerate(sorted(ground_truth_landmarks.items())):
             # Add landmark to state vector
             self.xEst = np.vstack((self.xEst, np.array([[lm_x], [lm_y]])))
