@@ -1,8 +1,9 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import IncludeLaunchDescription, TimerAction, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.substitutions import FindPackageShare
+from launch.substitutions import LaunchConfiguration
 import os
 
 
@@ -16,7 +17,28 @@ def generate_launch_description():
     4. [5s delay] motor_control, velocity_mapping, ekf_slam_node
     5. [8s delay] prm_planner_node - path planning service
     6. [10s delay] hw4 - PID-based waypoint navigation with PRM integration
+    
+    Usage:
+        ros2 launch hw_4 hw4.launch.py                              # distance mode, movement enabled (default)
+        ros2 launch hw_4 hw4.launch.py planning_mode:=safe         # safe mode
+        ros2 launch hw_4 hw4.launch.py enable_movement:=false      # disable robot movement
+        ros2 launch hw_4 hw4.launch.py planning_mode:=safe enable_movement:=false  # safe mode, no movement
     """
+    
+    # Declare launch argument for planning mode
+    planning_mode_arg = DeclareLaunchArgument(
+        'planning_mode',
+        default_value='distance',
+        description='Path planning mode: "distance" (minimize path length) or "safe" (maximize clearance)',
+        choices=['distance', 'safe']
+    )
+
+    # Declare launch argument for enable_movement
+    enable_movement_arg = DeclareLaunchArgument(
+        'enable_movement',
+        default_value='true',
+        description='Enable robot movement: "true" or "false"'
+    )
     
     # Get package paths
     camera_pkg_path = FindPackageShare(package='robot_vision_camera').find('robot_vision_camera')
@@ -67,6 +89,10 @@ def generate_launch_description():
         emulate_tty=True,
     )
 
+    # Get config file path for ekf_slam
+    hw4_pkg_path = FindPackageShare(package='hw_4').find('hw_4')
+    ekf_config_file = os.path.join(hw4_pkg_path, 'configs', 'ekf_slam_params.yaml')
+
     ekf_slam = TimerAction(
         period=5.0,
         actions=[
@@ -76,6 +102,7 @@ def generate_launch_description():
                 name='ekf_slam_node',
                 output='screen',
                 emulate_tty=True,
+                parameters=[ekf_config_file]
             )
         ]
     )
@@ -105,15 +132,19 @@ def generate_launch_description():
                 parameters=[{
                     'start_x': 1.9685,  # Robot at old (0,0) = new (1.9685, 0.762)
                     'start_y': 0.7620,
-                    'goal_x': 0.5588,   # 22" to the right of Tag 4
-                    'goal_y': 2.1256,   # +0.5m in y direction from previous
+                    'goal_x': 0.31,   # 22" to the right of Tag 4
+                    'goal_y': 2.117725,   # +0.5m in y direction from previous
                     'use_prm_planner': True,  # Enable PRM path planning
-                }]
+                    'enable_movement': LaunchConfiguration('enable_movement'),
+                }],
+                arguments=['--planning-mode', LaunchConfiguration('planning_mode')]
             )
         ]
     )
 
     return LaunchDescription([
+        planning_mode_arg,
+        enable_movement_arg,
         camera_launch,
         apriltag_launch,
         camera_tf,

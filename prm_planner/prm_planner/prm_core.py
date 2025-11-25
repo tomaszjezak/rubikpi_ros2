@@ -70,7 +70,7 @@ def distance_to_box(x, y, obstacle_bounds):
     return math.sqrt(dx*dx + dy*dy)
 
 
-def sample_points(sx, sy, gx, gy, rr, workspace_bounds, obstacle_bounds, rng, n_sample=1000):
+def sample_points(sx, sy, gx, gy, rr, workspace_bounds, obstacle_bounds, rng, n_sample=400):
     """
     Sample random points in free space... 25% extra credit baby
     Ensure points are collision-free in the obstacle-bounded space.

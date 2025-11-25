@@ -395,21 +395,22 @@ def ekf_slam(xEst, PEst, u, z, dt, Q, R, Cx, m_dist_th, landmark_indices=None, i
 
             # FREEZE LANDMARKS: Only update robot pose (first 3 elements)
             # Zero out landmark updates to keep them fixed at initial positions
-            # COMMENTED OUT to allow landmark updates and reduce jumping
-            # if len(update) > ROBOT_STATE_SIZE:
-            #     update[ROBOT_STATE_SIZE:] = 0
+            # This prevents landmarks from drifting and causing localization jumps
+            if len(update) > ROBOT_STATE_SIZE:
+                update[ROBOT_STATE_SIZE:] = 0
 
             # Apply update
             xEst = xEst + update
-            
-            # CRITICAL FIX: If robot is turning in place, don't update position
-            # This prevents the EKF from incorrectly updating position during pure rotation
-            # The motion model predicts no position change, so measurements shouldn't change it
-            if is_turning:
-                # Reset position to predicted position (no change during pure rotation)
-                # Only allow orientation and landmark updates
-                xEst[0, 0] = predicted_robot_x
-                xEst[1, 0] = predicted_robot_y
+
+            # LANDMARK LOCALIZATION DURING TURNING: ENABLED
+            # Previously, position was frozen during turns to prevent drift
+            # Now allowing landmark observations to correct position even while turning
+            # This enables more accurate localization when AprilTags are visible
+            # if is_turning:
+            #     # Reset position to predicted position (no change during pure rotation)
+            #     # Only allow orientation and landmark updates
+            #     xEst[0, 0] = predicted_robot_x
+            #     xEst[1, 0] = predicted_robot_y
             
             # Ensure xEst maintains column vector shape after update
             if len(xEst.shape) != 2 or xEst.shape[1] != 1:

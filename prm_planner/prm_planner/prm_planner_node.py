@@ -18,11 +18,11 @@ class PRMPlannerNode(Node):
         super().__init__('prm_planner_node')
 
         # Declare ROS2 parameters
-        self.declare_parameter('n_sample', 1000)
+        self.declare_parameter('n_sample', 400)
         self.declare_parameter('n_knn', 10)
         self.declare_parameter('max_edge_len', 3.5)  # Max edge ~diagonal of arena
         self.declare_parameter('robot_radius', 0.11)  # 11cm robot radius
-        self.declare_parameter('safety_margin', 0.4)  # 40cm safety margin for safe mode
+        self.declare_parameter('safety_margin', 0.35)  # 30cm safety margin for safe mode
         self.declare_parameter('workspace_bounds', [0.0, 2.8067, 0.0, 2.6544])  # Actual arena bounds
         self.declare_parameter('obstacle_bounds', [1.336675, 1.654175, 1.003300, 1.416000])  # Box at 52 5/8" X, 39.5" Y, 12.5"×16.25"
 

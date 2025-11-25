@@ -69,7 +69,8 @@ class EKF_SLAM_Node(Node):
         super().__init__('ekf_slam_node')
 
         # Declare parameters
-        self.declare_parameter('max_range', 5.0)
+        self.declare_parameter('max_range', 1.50)
+        self.declare_parameter('max_angular', 0.524)  # 45° FOV cone (±45° = 90° total)
         self.declare_parameter('m_dist_threshold', 2.0)
         self.declare_parameter('dt', 0.1)
         self.declare_parameter('process_noise_v', 0.2)
@@ -79,9 +80,11 @@ class EKF_SLAM_Node(Node):
         self.declare_parameter('state_cov_x', 0.5)
         self.declare_parameter('state_cov_y', 0.5)
         self.declare_parameter('state_cov_yaw', 0.5)
+        self.declare_parameter('log_tag_filtering', True)  # Enable detailed tag filtering logs
         
         # Get parameters
         self.max_range = self.get_parameter('max_range').get_parameter_value().double_value
+        self.max_angular = self.get_parameter('max_angular').get_parameter_value().double_value
         self.m_dist_threshold = self.get_parameter('m_dist_threshold').get_parameter_value().double_value
         self.dt = self.get_parameter('dt').get_parameter_value().double_value
         process_noise_v = self.get_parameter('process_noise_v').get_parameter_value().double_value
@@ -91,12 +94,30 @@ class EKF_SLAM_Node(Node):
         state_cov_x = self.get_parameter('state_cov_x').get_parameter_value().double_value
         state_cov_y = self.get_parameter('state_cov_y').get_parameter_value().double_value
         state_cov_yaw = self.get_parameter('state_cov_yaw').get_parameter_value().double_value
+        self.log_tag_filtering = self.get_parameter('log_tag_filtering').get_parameter_value().bool_value
+        self.log_tag_filtering = self.get_parameter('log_tag_filtering').get_parameter_value().bool_value
         
         # Build noise matrices
         self.Q = np.diag([process_noise_v, process_noise_w]) ** 2
         self.R = np.diag([measurement_noise_r, measurement_noise_b]) ** 2
         self.Cx = np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
-        
+
+        # Log all parameters from YAML
+        self.get_logger().info('=' * 70)
+        self.get_logger().info('[PARAMETERS LOADED FROM YAML]')
+        self.get_logger().info(f'  max_range: {self.max_range}')
+        self.get_logger().info(f'  max_angular: {self.max_angular}')
+        self.get_logger().info(f'  m_dist_threshold: {self.m_dist_threshold}')
+        self.get_logger().info(f'  dt: {self.dt}')
+        self.get_logger().info(f'  process_noise_v: {process_noise_v}')
+        self.get_logger().info(f'  process_noise_w: {process_noise_w}')
+        self.get_logger().info(f'  measurement_noise_r: {measurement_noise_r}')
+        self.get_logger().info(f'  measurement_noise_b: {measurement_noise_b}')
+        self.get_logger().info(f'  state_cov_x: {state_cov_x}')
+        self.get_logger().info(f'  state_cov_y: {state_cov_y}')
+        self.get_logger().info(f'  state_cov_yaw: {state_cov_yaw}')
+        self.get_logger().info('=' * 70)
+
         # Initialize TF
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -177,6 +198,7 @@ class EKF_SLAM_Node(Node):
                 self.detections_callback,
                 10
             )
+            self.get_logger().info('Subscribed to /detections topic for AprilTag detections')
         else:
             self.get_logger().warn('AprilTag detections disabled - apriltag_msgs not available')
         
@@ -196,6 +218,7 @@ class EKF_SLAM_Node(Node):
         # Track previous values for change detection
         self.prev_robot_state = np.array([[1.9685], [0.7620], [np.pi/2]])
         self.update_count = 0
+        self.tag_log_counter = 0  # Counter for throttling tag filtering logs
         
         # Data file path for saving
         self.data_file_path = os.path.join(
@@ -236,9 +259,13 @@ class EKF_SLAM_Node(Node):
     
     def detections_callback(self, msg):
         """Store latest detections"""
-        #if len(msg.detections) > 0:
-            #tag_ids = [str(d.id) for d in msg.detections]
-            #self.get_logger().info(f'[DETECTIONS] {len(msg.detections)} tag(s): {", ".join(tag_ids)}')
+        if len(msg.detections) > 0:
+            tag_ids = [str(d.id) for d in msg.detections]
+            self.get_logger().info(f'[DETECTIONS] {len(msg.detections)} tag(s): {", ".join(tag_ids)}')
+        else:
+            # Log when callback is called but no detections (throttled)
+            if self.tag_log_counter % 50 == 0:  # Every 5 seconds
+                self.get_logger().info('[DETECTIONS] Callback received but no tags detected')
         self.latest_detections = msg
         self.latest_detections_time = self.get_clock().now()
     
@@ -292,22 +319,37 @@ class EKF_SLAM_Node(Node):
         measurements_with_ids = []
         
         if self.latest_detections is None:
+            # Log when no detections have been received (throttled)
+            if self.log_tag_filtering and self.tag_log_counter % 50 == 0:
+                self.get_logger().info('[TAG FILTERING] No detections received yet (latest_detections is None)')
             return []
         
         # Check if detections are fresh (< 0.25s old)
         if self.latest_detections_time is not None:
             time_diff = (self.get_clock().now() - self.latest_detections_time).nanoseconds / 1e9
             if time_diff > 0.25:
+                # Log when detections are stale (throttled)
+                if self.log_tag_filtering and self.tag_log_counter % 50 == 0:
+                    self.get_logger().info(f'[TAG FILTERING] Detections are stale (age={time_diff:.2f}s > 0.25s)')
                 return []
+        
+        # Track all detected tags for logging
+        all_detected_tags = []
+        filtered_by_distance = []
+        filtered_by_angle = []
+        filtered_by_tf = []
+        used_tags = []
         
         for detection in self.latest_detections.detections:
             tag_id = detection.id
+            all_detected_tags.append(tag_id)
             
             # apriltag_ros creates TF frame as tag_{tag_id}
             frame_name = f'tag_{tag_id}'
             
             # Lookup TF transform: base_link -> tag_{tag_id}
             if not self.tf_buffer.can_transform('base_link', frame_name, rclpy.time.Time()):
+                filtered_by_tf.append(tag_id)
                 continue
             
             transform = self.tf_buffer.lookup_transform(
@@ -326,14 +368,55 @@ class EKF_SLAM_Node(Node):
             
             # Filter by max_range
             if r > self.max_range:
+                filtered_by_distance.append((tag_id, r))
                 continue
             
             # Calculate bearing (relative to robot heading in base_link frame)
             b = math.atan2(dy, dx)
             b = pi_2_pi(b)
-            
-            # Append (tag_id, range, bearing)
+
+            # Filter by field of view (FOV cone)
+            # Only use tags within ±max_angular from forward direction (x-axis of base_link)
+            if abs(b) > self.max_angular:
+                filtered_by_angle.append((tag_id, r, b))
+                continue
+
+            # Tag passed all filters - will be used
+            used_tags.append((tag_id, r, b))
             measurements_with_ids.append((tag_id, r, b))
+        
+        # Log tag filtering details (throttled: every 10 updates = ~1 second at 10Hz)
+        if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+            if len(all_detected_tags) > 0:
+                log_lines = [f'[TAG FILTERING] Detected {len(all_detected_tags)} tag(s): {all_detected_tags}']
+                
+                # Log used tags
+                if len(used_tags) > 0:
+                    used_str = ', '.join([f'Tag {tid}: r={r:.2f}m, b={math.degrees(b):.1f}° (USED)' 
+                                         for tid, r, b in used_tags])
+                    log_lines.append(f'  USED ({len(used_tags)}): {used_str}')
+                
+                # Log filtered by distance
+                if len(filtered_by_distance) > 0:
+                    dist_str = ', '.join([f'Tag {tid}: r={r:.2f}m > max_range({self.max_range:.2f}m)' 
+                                         for tid, r in filtered_by_distance])
+                    log_lines.append(f'  FILTERED - distance ({len(filtered_by_distance)}): {dist_str}')
+                
+                # Log filtered by angle
+                if len(filtered_by_angle) > 0:
+                    angle_str = ', '.join([f'Tag {tid}: r={r:.2f}m, b={math.degrees(b):.1f}° > max_angular({math.degrees(self.max_angular):.1f}°)' 
+                                          for tid, r, b in filtered_by_angle])
+                    log_lines.append(f'  FILTERED - angle ({len(filtered_by_angle)}): {angle_str}')
+                
+                # Log filtered by TF
+                if len(filtered_by_tf) > 0:
+                    tf_str = ', '.join([f'Tag {tid}' for tid in filtered_by_tf])
+                    log_lines.append(f'  FILTERED - no TF ({len(filtered_by_tf)}): {tf_str}')
+                
+                self.get_logger().info('\n'.join(log_lines))
+            else:
+                # Log when no tags detected at all
+                self.get_logger().info('[TAG FILTERING] No tags detected')
         
         return measurements_with_ids
     
@@ -369,6 +452,9 @@ class EKF_SLAM_Node(Node):
             # No measurements, just predict
             z = np.array([]).reshape(0, 2)
             landmark_indices = None
+            # Log when no tags are used (throttled: every 10 updates)
+            if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+                self.get_logger().info('[EKF UPDATE] No tags used - prediction only')
         else:
             # Separate measurements and tag IDs
             tag_ids = [m[0] for m in measurements_with_ids]
@@ -376,6 +462,10 @@ class EKF_SLAM_Node(Node):
 
             # Map tag IDs to landmark indices - will crash if unknown tag (intentional)
             landmark_indices = [self.tag_id_to_landmark_index[tag_id] for tag_id in tag_ids]
+            
+            # Log which tags are used in EKF update (throttled: every 10 updates)
+            if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+                self.get_logger().info(f'[EKF UPDATE] Using {len(tag_ids)} tag(s): {tag_ids} for localization')
         
         # Run EKF SLAM with tag ID-based data association
         # Pass is_turning flag to prevent position updates during pure rotation
@@ -420,6 +510,9 @@ class EKF_SLAM_Node(Node):
         # AprilTag already broadcasts tag_{tag_id} relative to base_link for detections
         # EKF estimates landmarks in odom frame, but we don't need to broadcast them as TF
         # since AprilTag TFs provide the detection data we need
+        
+        # Increment tag log counter for throttling
+        self.tag_log_counter += 1
         
         # Periodic status update every 50 updates (~5 seconds at 10Hz)
         if self.update_count % 50 == 0:
@@ -521,11 +614,11 @@ class EKF_SLAM_Node(Node):
         # self.get_logger().info('[STATE VECTOR]')
         # 
         # # Robot state
-        # robot_x = self.xEst[0, 0]
-        # robot_y = self.xEst[1, 0]
-        # robot_yaw = self.xEst[2, 0]
-        # self.get_logger().info(f'  Robot: x={robot_x:.4f}m, y={robot_y:.4f}m, yaw={math.degrees(robot_yaw):.2f}°')
-        # 
+        robot_x = self.xEst[0, 0]
+        robot_y = self.xEst[1, 0]
+        robot_yaw = self.xEst[2, 0]
+        self.get_logger().info(f'  Robot: x={robot_x:.4f}m, y={robot_y:.4f}m, yaw={math.degrees(robot_yaw):.2f}°')
+        
         # # Landmarks (sorted by tag ID)
         # if nLM > 0:
         #     self.get_logger().info(f'  Landmarks ({nLM} total):')

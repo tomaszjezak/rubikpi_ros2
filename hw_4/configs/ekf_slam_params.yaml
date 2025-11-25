@@ -1,13 +1,13 @@
 /**:
   ros__parameters:
-    max_range: 0.9
-    max_angular: 0.15
+    max_range: 2.5
+    max_angular: 0.785  # 45° FOV cone (±45° from forward = 90° total FOV)
     m_dist_threshold: 2.0
     dt: 0.1
     process_noise_v: 0.015  # m/s (std) - trust odometry even more
     process_noise_w: 0.2  # rad/s (std) - trust odometry even more
-    measurement_noise_r: 1.2  # extremely high = extremely smooth tag corrections
-    measurement_noise_b: 1.2  # extremely high = extremely smooth tag corrections
+    measurement_noise_r: 0.1  # temporarily reverted - trust AprilTag corrections more
+    measurement_noise_b: 0.1  # temporarily reverted - trust AprilTag corrections more
     # Starting state confidence
     state_cov_x: 0.01 # 95% within +- 20 cm
     state_cov_y: 0.01 # 95% within +- 20 cm

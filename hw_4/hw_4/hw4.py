@@ -6,6 +6,9 @@ from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Path
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster
 from prm_planner.srv import GetPRMPath
+from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA
+from geometry_msgs.msg import Point, Quaternion
 import numpy as np
 import os
 import yaml
@@ -94,9 +97,11 @@ class PIDcontroller:
         return result
 
 class Hw4Node(Node):
-    def __init__(self):
+    def __init__(self, planning_mode='distance'):
         super().__init__('hw4_node')
+        self.planning_mode = planning_mode
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.waypoint_marker_pub = self.create_publisher(MarkerArray, '/waypoint_markers', 10)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -108,11 +113,12 @@ class Hw4Node(Node):
         self.tag_positions = {}
 
         # Declare parameters for path planning
-        self.declare_parameter('start_x', 0.0)
-        self.declare_parameter('start_y', 0.0)
-        self.declare_parameter('goal_x', 1.0)
-        self.declare_parameter('goal_y', 1.0)
+        self.declare_parameter('start_x', 1.9685)  # Robot at old (0,0) = new (1.9685, 0.762)
+        self.declare_parameter('start_y', 0.7620)
+        self.declare_parameter('goal_x', 0.31)   # 22" to the right of Tag 4
+        self.declare_parameter('goal_y', 2.117725)   # +0.5m in y direction from previous
         self.declare_parameter('use_prm_planner', True)
+        self.declare_parameter('enable_movement', True)  # Can be overridden via launch file parameter
 
         # Waypoints list - populated from PRM planner service
         # Format: numpy array of [x, y, theta] where x,y are positions and theta is orientation
@@ -130,8 +136,9 @@ class Hw4Node(Node):
         
         self.current_waypoint_idx = 0
         self.waypoint_reached = False
-        self.tolerance = 0.15 # [m]
-        self.angle_tolerance = 0.2 # [rad]
+        self.tolerance = 0.30 # [m] - increased for more lenient waypoint reaching
+        self.angle_tolerance = 0.35 # [rad] ≈20° - more chill about orientation
+        self.backward_threshold = np.deg2rad(100)  # Skip waypoints more than 100° behind
 
         self.last_tag_detection_time = 0.0
         self.using_tag_localization = False
@@ -203,6 +210,7 @@ class Hw4Node(Node):
         request.start_y = start_y
         request.goal_x = goal_x
         request.goal_y = goal_y
+        request.planning_mode = self.planning_mode
 
         # Call service synchronously
         future = prm_client.call_async(request)
@@ -219,7 +227,7 @@ class Hw4Node(Node):
                     f'Received path plan: {path_len} points. First {first_few}: [{path_preview}]'
                 )
                 # Plot the path plan
-                self._plot_path_plan(response.path_x, response.path_y, start_x, start_y, goal_x, goal_y)
+                self._plot_path_plan(response.path_x, response.path_y, start_x, start_y, goal_x, goal_y, self.planning_mode)
                 # Convert path to waypoints with orientations
                 self._convert_path_to_waypoints(response.path_x, response.path_y)
             else:
@@ -231,7 +239,7 @@ class Hw4Node(Node):
             self.get_logger().error('PRM service call failed or timed out')
             self.waypoints = np.array([[0.0, 0.0, 0.0]])
 
-    def _plot_path_plan(self, path_x, path_y, start_x, start_y, goal_x, goal_y):
+    def _plot_path_plan(self, path_x, path_y, start_x, start_y, goal_x, goal_y, planning_mode='distance'):
         """
         Plot the planned path with workspace and obstacle bounds for visualization.
         
@@ -242,6 +250,7 @@ class Hw4Node(Node):
             start_y: Start y coordinate
             goal_x: Goal x coordinate
             goal_y: Goal y coordinate
+            planning_mode: Planning mode used ("safe" or "distance")
         """
         try:
             fig, ax = plt.subplots(figsize=(10, 10))
@@ -275,7 +284,7 @@ class Hw4Node(Node):
             
             ax.set_xlabel('X (m)')
             ax.set_ylabel('Y (m)')
-            ax.set_title(f'PRM Path Plan ({len(path_x)} waypoints)')
+            ax.set_title(f'PRM Path Plan - {planning_mode.upper()} Mode ({len(path_x)} waypoints)')
             ax.legend()
             ax.grid(True, alpha=0.3)
             ax.set_aspect('equal')
@@ -300,6 +309,8 @@ class Hw4Node(Node):
         """
         if len(path_x) == 0 or len(path_y) == 0:
             self.waypoints = np.array([[0.0, 0.0, 0.0]])
+            self.current_waypoint_idx = 0  # Reset index
+            self.waypoint_reached = False  # Reset waypoint reached flag
             return
 
         waypoints_list = []
@@ -324,6 +335,8 @@ class Hw4Node(Node):
             waypoints_list.append([x, y, theta])
 
         self.waypoints = np.array(waypoints_list)
+        self.current_waypoint_idx = 0  # Reset to start of new path
+        self.waypoint_reached = False  # Reset waypoint reached flag
         self.get_logger().info(f'Converted path to {len(self.waypoints)} waypoints')
 
     def get_desired_heading_to_goal(self, current_wp):
@@ -333,11 +346,40 @@ class Hw4Node(Node):
         delta_x = current_wp[0] - self.current_state[0]
         delta_y = current_wp[1] - self.current_state[1]
         angle_to_target = np.arctan2(delta_y, delta_x)
-        
+
         desired_heading = angle_to_target
-        
+
         return desired_heading
-    
+
+    def is_waypoint_behind(self, waypoint_idx):
+        """
+        Check if a waypoint is significantly behind the robot's current heading.
+        Returns True if the waypoint is more than backward_threshold degrees behind.
+
+        Args:
+            waypoint_idx: Index of waypoint to check
+
+        Returns:
+            bool: True if waypoint is behind robot, False otherwise
+        """
+        if waypoint_idx >= len(self.waypoints):
+            return False
+
+        waypoint = self.waypoints[waypoint_idx]
+
+        # Calculate angle to waypoint
+        delta_x = waypoint[0] - self.current_state[0]
+        delta_y = waypoint[1] - self.current_state[1]
+        angle_to_waypoint = np.arctan2(delta_y, delta_x)
+
+        # Calculate relative angle (waypoint angle - robot heading)
+        relative_angle = angle_to_waypoint - self.current_state[2]
+        # Normalize to [-pi, pi]
+        relative_angle = (relative_angle + np.pi) % (2 * np.pi) - np.pi
+
+        # Check if waypoint is behind (absolute angle > threshold)
+        return abs(relative_angle) > self.backward_threshold
+
     def get_rotation_direction(self, heading_error):
         """
         Determine rotation direction based on heading error.
@@ -359,12 +401,17 @@ class Hw4Node(Node):
         """
         Main control loop with three stages: rotate to goal, drive, rotate to orientation
         """
+        # Check if movement is disabled
+        if not self.get_parameter('enable_movement').get_parameter_value().bool_value:
+            self.stop_robot()
+            return
+
         # EKF SLAM node is authoritative for odom -> base_link TF
         # Wait for transform to be available (EKF SLAM must be running)
         if not self.tf_buffer.can_transform('odom', 'base_link', rclpy.time.Time()):
             # Transform not available yet - skip this iteration
             return
-        
+
         # Read robot pose from EKF TF
         transform = self.tf_buffer.lookup_transform(
             'odom', 'base_link', rclpy.time.Time()
@@ -386,13 +433,25 @@ class Hw4Node(Node):
         
         # Dead check:
         if self.prev_stage != self.stage:
-            self.do_nothing_ticks = 2
+            self.do_nothing_ticks = 5
             self.prev_stage = self.stage
         if self.do_nothing_ticks > 0:
             self.do_nothing_ticks -= 1
             self.stop_robot()
             return
         
+        # Skip waypoints that are behind the robot
+        while self.current_waypoint_idx < len(self.waypoints):
+            if self.is_waypoint_behind(self.current_waypoint_idx):
+                self.get_logger().info(
+                    f'Skipping waypoint {self.current_waypoint_idx} '
+                    f'(more than {np.degrees(self.backward_threshold):.0f}° behind robot)'
+                )
+                self.current_waypoint_idx += 1
+                self.waypoint_reached = False
+            else:
+                break
+
         if self.current_waypoint_idx >= len(self.waypoints):
             # Only log once when all waypoints are reached
             if not hasattr(self, '_waypoints_complete_logged'):
@@ -400,10 +459,10 @@ class Hw4Node(Node):
                 self._waypoints_complete_logged = True
             # self.stop_robot()
             return
-        
+
 
         current_wp = self.waypoints[self.current_waypoint_idx]
-        
+
         # Track previous stage to only log on changes
         prev_stage = getattr(self, '_prev_stage', None)
 
@@ -432,7 +491,8 @@ class Hw4Node(Node):
             if abs(heading_error) < 0.05:
                 # Switch to DRIVE
                 if prev_stage != 'drive':
-                    self.get_logger().info(f'Stage: {self.stage} -> drive')
+                    # self.get_logger().info(f'Stage: {self.stage} -> drive')
+                    pass
                 self.stage = 'drive'
                 twist_msg.angular.z = 0.0
             else:
@@ -457,7 +517,8 @@ class Hw4Node(Node):
                 if abs(heading_error) > 0.2:
                     # We are pointing too far off course, need to rotate first
                     if prev_stage != 'rotate_to_face_selected_waypoint':
-                        self.get_logger().info(f'Stage: {self.stage} -> rotate_to_face_selected_waypoint')
+                        # self.get_logger().info(f'Stage: {self.stage} -> rotate_to_face_selected_waypoint')
+                        pass
                     self.stage = 'rotate_to_face_selected_waypoint'
                     twist_msg.linear.x = 0.0
                 else:
@@ -466,9 +527,12 @@ class Hw4Node(Node):
 
         # Store current stage for next iteration
         self._prev_stage = self.stage
-        
+
         # EKF SLAM node handles pose estimation via TF
         self.cmd_vel_pub.publish(twist_msg)
+
+        # Publish waypoint visualization markers
+        self.publish_waypoint_visualization()
         
         
     def localization_update(self):
@@ -549,11 +613,174 @@ class Hw4Node(Node):
             f'Updated pose from tag {tag_id}: '
             f'pos=({robot_map_pos[0]:.3f}, {robot_map_pos[1]:.3f}), yaw={yaw:.3f}'
         )
-    
+
+    def publish_waypoint_visualization(self):
+        """
+        Publish visualization markers for waypoints in rviz2.
+        Shows all waypoints with different colors:
+        - Completed waypoints: Green spheres
+        - Current target waypoint: Large cyan arrow showing orientation
+        - Future waypoints: Gray spheres
+        """
+        marker_array = MarkerArray()
+        current_time = self.get_clock().now().to_msg()
+
+        # Marker for all waypoint positions as spheres
+        for i, waypoint in enumerate(self.waypoints):
+            marker = Marker()
+            marker.header.frame_id = 'odom'
+            marker.header.stamp = current_time
+            marker.ns = 'waypoints'
+            marker.id = i
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+
+            # Position
+            marker.pose.position.x = float(waypoint[0])
+            marker.pose.position.y = float(waypoint[1])
+            marker.pose.position.z = 0.05  # Slightly above ground
+
+            # Orientation (identity quaternion)
+            marker.pose.orientation.w = 1.0
+
+            # Size - smaller for waypoints
+            if i == self.current_waypoint_idx:
+                # Current waypoint - skip, we'll add special arrow marker
+                continue
+            else:
+                marker.scale.x = 0.08
+                marker.scale.y = 0.08
+                marker.scale.z = 0.08
+
+            # Color based on status
+            if i < self.current_waypoint_idx:
+                # Completed waypoints - green
+                marker.color.r = 0.0
+                marker.color.g = 0.8
+                marker.color.b = 0.0
+                marker.color.a = 0.6
+            else:
+                # Future waypoints - light gray
+                marker.color.r = 0.6
+                marker.color.g = 0.6
+                marker.color.b = 0.6
+                marker.color.a = 0.4
+
+            marker_array.markers.append(marker)
+
+        # Special marker for current target waypoint - large arrow showing orientation
+        if self.current_waypoint_idx < len(self.waypoints):
+            current_wp = self.waypoints[self.current_waypoint_idx]
+
+            # Arrow marker for current waypoint
+            arrow_marker = Marker()
+            arrow_marker.header.frame_id = 'odom'
+            arrow_marker.header.stamp = current_time
+            arrow_marker.ns = 'current_waypoint'
+            arrow_marker.id = 0
+            arrow_marker.type = Marker.ARROW
+            arrow_marker.action = Marker.ADD
+
+            # Position
+            arrow_marker.pose.position.x = float(current_wp[0])
+            arrow_marker.pose.position.y = float(current_wp[1])
+            arrow_marker.pose.position.z = 0.1
+
+            # Orientation from waypoint's theta (yaw)
+            qx, qy, qz, qw = self.euler_to_quaternion(0, 0, float(current_wp[2]))
+            arrow_marker.pose.orientation.x = qx
+            arrow_marker.pose.orientation.y = qy
+            arrow_marker.pose.orientation.z = qz
+            arrow_marker.pose.orientation.w = qw
+
+            # Arrow size
+            arrow_marker.scale.x = 0.20  # Length
+            arrow_marker.scale.y = 0.03  # Width
+            arrow_marker.scale.z = 0.03  # Height
+
+            # Bright cyan color
+            arrow_marker.color.r = 0.0
+            arrow_marker.color.g = 0.9
+            arrow_marker.color.b = 0.9
+            arrow_marker.color.a = 1.0
+
+            marker_array.markers.append(arrow_marker)
+
+            # Add a sphere at current waypoint too for emphasis
+            sphere_marker = Marker()
+            sphere_marker.header.frame_id = 'odom'
+            sphere_marker.header.stamp = current_time
+            sphere_marker.ns = 'current_waypoint_sphere'
+            sphere_marker.id = 0
+            sphere_marker.type = Marker.SPHERE
+            sphere_marker.action = Marker.ADD
+
+            sphere_marker.pose.position.x = float(current_wp[0])
+            sphere_marker.pose.position.y = float(current_wp[1])
+            sphere_marker.pose.position.z = 0.05
+            sphere_marker.pose.orientation.w = 1.0
+
+            sphere_marker.scale.x = 0.12
+            sphere_marker.scale.y = 0.12
+            sphere_marker.scale.z = 0.12
+
+            # Yellow color for current waypoint sphere
+            sphere_marker.color.r = 1.0
+            sphere_marker.color.g = 0.9
+            sphere_marker.color.b = 0.0
+            sphere_marker.color.a = 0.8
+
+            marker_array.markers.append(sphere_marker)
+
+            # Add text label showing waypoint number
+            text_marker = Marker()
+            text_marker.header.frame_id = 'odom'
+            text_marker.header.stamp = current_time
+            text_marker.ns = 'waypoint_labels'
+            text_marker.id = 0
+            text_marker.type = Marker.TEXT_VIEW_FACING
+            text_marker.action = Marker.ADD
+
+            text_marker.pose.position.x = float(current_wp[0])
+            text_marker.pose.position.y = float(current_wp[1])
+            text_marker.pose.position.z = 0.25  # Above the waypoint
+            text_marker.pose.orientation.w = 1.0
+
+            text_marker.scale.z = 0.08  # Text height
+
+            text_marker.color.r = 1.0
+            text_marker.color.g = 1.0
+            text_marker.color.b = 1.0
+            text_marker.color.a = 1.0
+
+            text_marker.text = f"WP {self.current_waypoint_idx}/{len(self.waypoints)-1}"
+
+            marker_array.markers.append(text_marker)
+
+        # Publish the marker array
+        self.waypoint_marker_pub.publish(marker_array)
 
 def main(args=None):
+    # Parse command-line arguments for planning mode
+    import sys
+    planning_mode = 'distance'  # default
+    
+    # Check for --safe or --planning-mode flags
+    if '--safe' in sys.argv:
+        planning_mode = 'safe'
+    elif '--planning-mode' in sys.argv:
+        try:
+            idx = sys.argv.index('--planning-mode')
+            if idx + 1 < len(sys.argv):
+                mode = sys.argv[idx + 1].lower()
+                if mode in ['distance', 'safe']:
+                    planning_mode = mode
+        except (ValueError, IndexError):
+            pass
+    
     rclpy.init(args=args)
-    node = Hw4Node()
+    node = Hw4Node(planning_mode=planning_mode)
+    node.get_logger().info(f'Starting with planning mode: {planning_mode}')
     
     try:
         rclpy.spin(node)
