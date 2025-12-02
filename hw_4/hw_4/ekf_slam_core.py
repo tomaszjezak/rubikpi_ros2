@@ -393,13 +393,7 @@ def ekf_slam(xEst, PEst, u, z, dt, Q, R, Cx, m_dist_th, landmark_indices=None, i
                 print(f"ERROR: update size {len(update)} doesn't match state size {state_size}")
                 continue
 
-            # FREEZE LANDMARKS: Only update robot pose (first 3 elements)
-            # Zero out landmark updates to keep them fixed at initial positions
-            # This prevents landmarks from drifting and causing localization jumps
-            if len(update) > ROBOT_STATE_SIZE:
-                update[ROBOT_STATE_SIZE:] = 0
-
-            # Apply update
+            # Apply update (landmarks will be updated dynamically in true SLAM)
             xEst = xEst + update
 
             # LANDMARK LOCALIZATION DURING TURNING: ENABLED
