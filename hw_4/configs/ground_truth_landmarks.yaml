@@ -1,41 +1,43 @@
-# Ground truth landmark positions for SLAM evaluation
+# Ground truth landmark positions for SLAM evaluation and reference
+# NOTE: This file is NOT loaded by the EKF SLAM node - landmarks are discovered dynamically
 # Format: tag_id, x (meters), y (meters)
 # Origin is at the corner near tags 5 and 6 (bottom-left)
+# These positions are used for plotting and performance evaluation only
 
 landmarks:
   - tag_id: 0
-    x: 2.8194
-    y: 0.73025
+    x: 0.7112  # 28 inches
+    y: 0.0000  # 0 inches
   - tag_id: 1
-    x: 2.8194
-    y: 1.597025
+    x: 1.49225  # 58.75 inches
+    y: 0.0000   # 0 inches
   - tag_id: 2
-    x: 1.870075
-    y: 2.644775
+    x: 2.2098  # 87 inches (111-24)
+    y: 2.6416  # 104 inches
   - tag_id: 3
-    x: 1.02235
-    y: 2.644775
+    x: 0.762   # 30 inches (111-81)
+    y: 2.6416  # 104 inches
   - tag_id: 4
-    x: 0.0000
-    y: 2.117725
+    x: 2.8194  # 111 inches
+    y: 1.42875  # 56.25 inches (111-54.75)
   - tag_id: 5
-    x: 0.0000
-    y: 0.746125
+    x: 2.8194  # 111 inches
+    y: 2.1209  # 83.5 inches (111-27.5)
   - tag_id: 6
-    x: 1.143
-    y: 0.0000
+    x: 2.1971  # 86.5 inches
+    y: 0.0000  # 0 inches
   - tag_id: 7
-    x: 1.93802
-    y: 0.0000
+    x: 2.8194  # 111 inches
+    y: 0.6096  # 24 inches
   - tag_id: 8
-    x: 1.654175
-    y: 1.193800
+    x: 1.4986  # 59 inches (111-52)
+    y: 2.6416  # 104 inches
   - tag_id: 9
-    x: 1.501775
-    y: 1.003300
+    x: 0.0000  # 0 inches
+    y: 2.1082  # 83 inches (104-21)
   - tag_id: 10
-    x: 1.336675
-    y: 1.219200
+    x: 0.0000  # 0 inches
+    y: 1.3335  # 52.5 inches (104-51.5)
   - tag_id: 11
-    x: 1.482725
-    y: 1.416000
+    x: 0.0000  # 0 inches
+    y: 0.5334  # 21 inches (104-83)

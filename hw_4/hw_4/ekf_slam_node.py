@@ -14,8 +14,6 @@ import time
 import pickle
 import os
 from pathlib import Path
-import yaml
-from ament_index_python.packages import get_package_share_directory
 
 # Try to import apriltag_msgs, fallback if not available
 try:
@@ -38,40 +36,12 @@ except ImportError:
 
 
 class EKF_SLAM_Node(Node):
-    def load_ground_truth_landmarks(self):
-        """Load ground truth landmarks from YAML file"""
-        try:
-            # Use ROS2 package share directory to find config
-            pkg_share = get_package_share_directory('hw_4')
-            config_path = os.path.join(pkg_share, 'configs', 'ground_truth_landmarks.yaml')
-        except Exception as e:
-            self.get_logger().error(f'Could not find hw_4 package: {e}')
-            return {}
-
-        if not os.path.exists(config_path):
-            self.get_logger().error(f'Landmark config not found at {config_path}')
-            return {}
-
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-
-        landmarks = {}
-        for lm in config['landmarks']:
-            tag_id = lm['tag_id']
-            x = lm['x']
-            y = lm['y']
-            landmarks[tag_id] = (x, y)
-
-        self.get_logger().info(f'Loaded {len(landmarks)} ground truth landmarks from {config_path}')
-        return landmarks
-
     def __init__(self):
         super().__init__('ekf_slam_node')
 
         # Declare parameters
         self.declare_parameter('max_range', 1.50)
         self.declare_parameter('max_angular', 0.524)  # 45° FOV cone (±45° = 90° total)
-        self.declare_parameter('m_dist_threshold', 2.0)
         self.declare_parameter('dt', 0.1)
         self.declare_parameter('process_noise_v', 0.2)
         self.declare_parameter('process_noise_w', 0.1)
@@ -85,7 +55,6 @@ class EKF_SLAM_Node(Node):
         # Get parameters
         self.max_range = self.get_parameter('max_range').get_parameter_value().double_value
         self.max_angular = self.get_parameter('max_angular').get_parameter_value().double_value
-        self.m_dist_threshold = self.get_parameter('m_dist_threshold').get_parameter_value().double_value
         self.dt = self.get_parameter('dt').get_parameter_value().double_value
         process_noise_v = self.get_parameter('process_noise_v').get_parameter_value().double_value
         process_noise_w = self.get_parameter('process_noise_w').get_parameter_value().double_value
@@ -95,8 +64,7 @@ class EKF_SLAM_Node(Node):
         state_cov_y = self.get_parameter('state_cov_y').get_parameter_value().double_value
         state_cov_yaw = self.get_parameter('state_cov_yaw').get_parameter_value().double_value
         self.log_tag_filtering = self.get_parameter('log_tag_filtering').get_parameter_value().bool_value
-        self.log_tag_filtering = self.get_parameter('log_tag_filtering').get_parameter_value().bool_value
-        
+
         # Build noise matrices
         self.Q = np.diag([process_noise_v, process_noise_w]) ** 2
         self.R = np.diag([measurement_noise_r, measurement_noise_b]) ** 2
@@ -107,7 +75,6 @@ class EKF_SLAM_Node(Node):
         self.get_logger().info('[PARAMETERS LOADED FROM YAML]')
         self.get_logger().info(f'  max_range: {self.max_range}')
         self.get_logger().info(f'  max_angular: {self.max_angular}')
-        self.get_logger().info(f'  m_dist_threshold: {self.m_dist_threshold}')
         self.get_logger().info(f'  dt: {self.dt}')
         self.get_logger().info(f'  process_noise_v: {process_noise_v}')
         self.get_logger().info(f'  process_noise_w: {process_noise_w}')
@@ -215,7 +182,7 @@ class EKF_SLAM_Node(Node):
         # EKF SLAM initialization logs commented out
         # self.get_logger().info('=' * 70)
         # self.get_logger().info('EKF SLAM Node initialized')
-        # self.get_logger().info(f'Update period: {self.dt}s | Max range: {self.max_range}m | Threshold: {self.m_dist_threshold}')
+        # self.get_logger().info(f'Update period: {self.dt}s | Max range: {self.max_range}m')
         # self.get_logger().info('=' * 70)
     
     def cmd_vel_callback(self, msg):
@@ -465,9 +432,10 @@ class EKF_SLAM_Node(Node):
         
         # Run EKF SLAM with tag ID-based data association
         # Pass is_turning flag to prevent position updates during pure rotation
+        # Note: m_dist_th (2.0) is unused when landmark_indices is provided (tag ID mode)
         self.xEst, self.PEst = ekf_slam(
             self.xEst, self.PEst, u, z,
-            self.dt, self.Q, self.R, self.Cx, self.m_dist_threshold,
+            self.dt, self.Q, self.R, self.Cx, 2.0,  # m_dist_th unused in tag ID mode
             landmark_indices=landmark_indices,
             is_turning=self.is_turning
         )
