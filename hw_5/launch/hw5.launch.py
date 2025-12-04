@@ -9,20 +9,20 @@ import os
 
 def generate_launch_description():
     """
-    Launch file for hw_4 package.
+    Launch file for hw_5 package.
     Starts nodes in sequence:
     1. robot_vision_camera - camera driver
     2. apriltag_ros - AprilTag detection
     3. camera_tf - static tf_node
     4. [5s delay] motor_control, velocity_mapping, ekf_slam_node
     5. [8s delay] prm_planner_node - path planning service
-    6. [10s delay] hw4 - PID-based waypoint navigation with PRM integration
-    
+    6. [10s delay] hw5 - PID-based waypoint navigation with PRM integration
+
     Usage:
-        ros2 launch hw_4 hw4.launch.py                              # distance mode, movement enabled (default)
-        ros2 launch hw_4 hw4.launch.py planning_mode:=safe         # safe mode
-        ros2 launch hw_4 hw4.launch.py enable_movement:=false      # disable robot movement
-        ros2 launch hw_4 hw4.launch.py planning_mode:=safe enable_movement:=false  # safe mode, no movement
+        ros2 launch hw_5 hw5.launch.py                              # distance mode, movement enabled (default)
+        ros2 launch hw_5 hw5.launch.py planning_mode:=safe         # safe mode
+        ros2 launch hw_5 hw5.launch.py enable_movement:=false      # disable robot movement
+        ros2 launch hw_5 hw5.launch.py planning_mode:=safe enable_movement:=false  # safe mode, no movement
     """
     
     # Declare launch argument for planning mode
@@ -59,7 +59,7 @@ def generate_launch_description():
         period=5.0,
         actions=[
             Node(
-                package='hw_4',
+                package='hw_5',
                 executable='motor_control',
                 name='motor_control',
                 output='screen',
@@ -72,7 +72,7 @@ def generate_launch_description():
         period=5.0,
         actions=[
             Node(
-                package='hw_4',
+                package='hw_5',
                 executable='velocity_mapping',
                 name='velocity_mapping',
                 output='screen',
@@ -82,7 +82,7 @@ def generate_launch_description():
     )
     
     camera_tf = Node(
-        package='hw_4',
+        package='hw_5',
         executable='camera_tf',
         name='camera_tf',
         output='screen',
@@ -90,14 +90,14 @@ def generate_launch_description():
     )
 
     # Get config file path for ekf_slam
-    hw4_pkg_path = FindPackageShare(package='hw_4').find('hw_4')
-    ekf_config_file = os.path.join(hw4_pkg_path, 'configs', 'ekf_slam_params.yaml')
+    hw5_pkg_path = FindPackageShare(package='hw_5').find('hw_5')
+    ekf_config_file = os.path.join(hw5_pkg_path, 'configs', 'ekf_slam_params.yaml')
 
     ekf_slam = TimerAction(
         period=5.0,
         actions=[
             Node(
-                package='hw_4',
+                package='hw_5',
                 executable='ekf_slam',
                 name='ekf_slam_node',
                 output='screen',
@@ -120,13 +120,13 @@ def generate_launch_description():
         ]
     )
 
-    hw4 = TimerAction(
+    hw5 = TimerAction(
         period=10.0,
         actions=[
             Node(
-                package='hw_4',
-                executable='hw4',
-                name='hw4',
+                package='hw_5',
+                executable='hw5',
+                name='hw5',
                 output='screen',
                 emulate_tty=True,
                 parameters=[{
@@ -152,5 +152,5 @@ def generate_launch_description():
         velocity_mapping,
         ekf_slam,
         prm_planner,
-        hw4,
+        hw5,
     ])

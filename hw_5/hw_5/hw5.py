@@ -96,9 +96,9 @@ class PIDcontroller:
             result[0] = 0.0
         return result
 
-class Hw4Node(Node):
+class Hw5Node(Node):
     def __init__(self, planning_mode='distance'):
-        super().__init__('hw4_node')
+        super().__init__('hw5_node')
         self.planning_mode = planning_mode
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.waypoint_marker_pub = self.create_publisher(MarkerArray, '/waypoint_markers', 10)
@@ -779,7 +779,7 @@ def main(args=None):
             pass
     
     rclpy.init(args=args)
-    node = Hw4Node(planning_mode=planning_mode)
+    node = Hw5Node(planning_mode=planning_mode)
     node.get_logger().info(f'Starting with planning mode: {planning_mode}')
     
     try:

@@ -4,7 +4,7 @@
 #include <vector>
 #include <cmath>
 
-namespace GRID_COVERAGE_BASE__GRID_MAP_HPP_
+namespace grid_coverage_base
 {
 enum class CellState {
         UNKNOWN = 0,

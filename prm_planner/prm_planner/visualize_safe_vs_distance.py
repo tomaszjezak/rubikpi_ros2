@@ -136,11 +136,11 @@ def visualize_paths(start_x, start_y, goal_x, goal_y):
 if __name__ == '__main__':
     import sys
     
-    # Default start/goal from hw4 launch file, or use command line args
+    # Default start/goal from hw5 launch file, or use command line args
     if len(sys.argv) == 5:
         start_x, start_y, goal_x, goal_y = map(float, sys.argv[1:5])
     else:
-        # Default values from hw4 launch
+        # Default values from hw5 launch
         start_x, start_y = 1.9685, 0.7620
         goal_x, goal_y = 0.5588, 2.1256
         print(f'Using default start/goal: ({start_x:.3f}, {start_y:.3f}) -> ({goal_x:.3f}, {goal_y:.3f})')

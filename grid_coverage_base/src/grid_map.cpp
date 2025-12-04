@@ -6,7 +6,7 @@ namespace grid_coverage_base
 {
 
 GridMap::GridMap()
-: workspace_min_x(0.0),
+: workspace_min_x_(0.0),
   workspace_max_x_(0.0),
   workspace_min_y_(0.0),
   workspace_max_y_(0.0),
@@ -22,7 +22,7 @@ void GridMap::initialize(
     double workspace_min_x, double workspace_max_x,
     double workspace_min_y, double workspace_max_y,//function params
     double cell_size)
-
+{
     workspace_min_x_ = workspace_min_x;
     workspace_max_x_ = workspace_max_x; //store params into member variable
     workspace_min_y_ = workspace_min_y;
@@ -31,11 +31,11 @@ void GridMap::initialize(
   
     // calculate grid dimensions
     grid_width_ = static_cast<int>(std::ceil((workspace_max_x - workspace_min_x) / cell_size_));
-    grid_height_ = static_cast<int>(std:ceil((workspace_max_y - workspace_min_y) / cell_size_));
+    grid_height_ = static_cast<int>(std::ceil((workspace_max_y - workspace_min_y) / cell_size_));
 
     // initialize grid with UNKNOWN state
     grid_.resize(grid_height_);
-    for (int y = 0; y < grid_height; ++y) {
+    for (int y = 0; y < grid_height_; ++y) {
         grid_[y].resize(grid_width_, CellState::UNKNOWN);
     }
 
@@ -61,7 +61,7 @@ void GridMap::initialize(
     }    
 
     // count total explorable cells (not walls)
-    total_cells = 0;
+    total_cells_ = 0;
     for (int y = 0; y < grid_height_; ++y) {
         for (int x = 0; x < grid_width_; ++x) {
             if (grid_[y][x] != CellState::WALL) {
@@ -89,7 +89,7 @@ std::pair<double, double> GridMap::gridToWorld(int grid_x, int grid_y) const
 {
     // clamp coordinates
     grid_x = std::max(0, std::min(grid_x, grid_width_ - 1));
-    grid_y = std::max(0, std::min(grid_y, grid_height - 1));
+    grid_y = std::max(0, std::min(grid_y, grid_height_ - 1));
 
     // return center of cell
     double world_x = workspace_min_x_ + (grid_x + 0.5) * cell_size_;
@@ -101,14 +101,14 @@ std::pair<double, double> GridMap::gridToWorld(int grid_x, int grid_y) const
 CellState GridMap::getCellState(int grid_x, int grid_y) const
 {
     if (!isInBounds(grid_x, grid_y)) {
-        return CellState::WALL // out of bounds = wall
+        return CellState::WALL; // out of bounds = wall
     }
     return grid_[grid_y][grid_x];
 }
 
 void GridMap::setCellState(int grid_x, int grid_y, CellState state)
 {
-    if (!isInbounds(grid_x, grid_y)) {
+    if (!isInBounds(grid_x, grid_y)) {
         return;
     }
 
@@ -135,13 +135,13 @@ void GridMap::markVisited(double world_x, double world_y)
 }
 
 void GridMap::markVisitedRadius(double world_x, double world_y, double radius)
-{// Tomasz's assumption: if robot radius of 11cm covers the center of another cell, that cell is visited... reasonable?
+{// Tomasz's assumption: if robot (radius of 11cm) covers the center of another cell, that cell is visited... reasonable?
     // marka ll cells within radius as visited
     auto [center_x, center_y] = worldToGrid(world_x, world_y);
 
-    int radius_cells = static_cast<int>(std::ceil(radius / cell_size));
+    int radius_cells = static_cast<int>(std::ceil(radius / cell_size_));
     for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
-        for (int dx = -radius_cells, dx <= radius_cells; ++dx) {
+        for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
             int grid_x = center_x + dx;
             int grid_y = center_y + dy;
 
@@ -153,7 +153,7 @@ void GridMap::markVisitedRadius(double world_x, double world_y, double radius)
                     std::pow(cell_world_y - world_y, 2));
                 
                 if (dist <= radius) {
-                    cellState current = getCellState(grid_x, grid_y);
+                    CellState current = getCellState(grid_x, grid_y);
                     if (current != CellState::VISITED && current != CellState::WALL) {
                         setCellState(grid_x, grid_y, CellState::VISITED);
                     }
@@ -163,5 +163,67 @@ void GridMap::markVisitedRadius(double world_x, double world_y, double radius)
     }
 }
 
+bool GridMap::isInBounds(int grid_x, int grid_y) const
+{
+    return grid_x >= 0 && grid_x < grid_width_ &&
+           grid_y >= 0 && grid_y < grid_height_;
+}
 
+bool GridMap::isInWorkspace(double world_x, double world_y) const
+{
+    return world_x >= workspace_min_x_ && world_x <= workspace_max_x_ &&
+           world_y >= workspace_min_y_ && world_y <= workspace_max_y_;
+}
 
+std::pair<int, int> GridMap::getGridDimensions() const
+{
+    return {grid_width_, grid_height_};
+}
+
+double GridMap::getCellSize() const
+{
+    return cell_size_;
+}
+
+std::tuple<double, double, double, double> GridMap::getWorkspaceBounds() const
+{
+    return {workspace_min_x_, workspace_max_x_, workspace_min_y_, workspace_max_y_};
+}
+
+std::vector<std::pair<int, int>> GridMap::getNeighbors8(int grid_x, int grid_y) const
+{
+    std::vector<std::pair<int, int>> neighbors;
+
+    // 8 connected neighbors - N, NE, E, SE, S, SW, W, NW
+    int dx[] = {0, 1, 1, 1, 0, -1, -1, -1};
+    int dy[] = {1, 1, 0, -1, -1, -1, 0, 1};
+
+    for (int i = 0; i < 8; ++i) {
+        int nx = grid_x + dx[i];
+        int ny = grid_y + dy[i];
+
+        if (isInBounds(nx, ny)) {
+            neighbors.push_back({nx, ny});
+        }
+    }
+
+    return neighbors;
+}
+
+int GridMap::getVisitedCount() const
+{
+    return visited_count_;
+}
+
+int GridMap::getTotalCells() const
+{
+    return total_cells_;
+}
+
+void GridMap::clampGridCoords(int & grid_x, int & grid_y) const
+{
+    grid_x = std::max(0, std::min(grid_x, grid_width_ - 1));
+    grid_y = std::max(0, std::min(grid_y, grid_height_ - 1));
+}
+
+}
