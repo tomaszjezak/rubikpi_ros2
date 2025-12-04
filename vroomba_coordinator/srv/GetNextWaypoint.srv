@@ -1,0 +1,9 @@
+float64 current_x
+float64 current_y
+float64 current_yaw
+int32 num_waypoints
+---
+float64[] waypoint_x
+float64[] waypoint_y
+float64[] waypoint_theta
+bool success

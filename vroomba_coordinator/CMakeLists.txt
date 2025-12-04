@@ -20,6 +20,12 @@ find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(grid_coverage_base REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+# Generate services
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/GetNextWaypoint.srv"
+)
 
 # Include directories
 include_directories(include)
@@ -37,12 +43,18 @@ ament_target_dependencies(vroomba_coordinator_node
   std_msgs
   tf2_ros
   grid_coverage_base
+  rosidl_default_runtime
 )
 
 # Link libraries
 target_link_libraries(vroomba_coordinator_node
   grid_coverage_base_lib
 )
+
+# Link service types
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(vroomba_coordinator_node ${cpp_typesupport_target})
 
 # Install targets
 install(TARGETS
@@ -64,6 +76,11 @@ install(DIRECTORY config/
 # Install launch files
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch/
+)
+
+# Install service files
+install(DIRECTORY srv/
+  DESTINATION share/${PROJECT_NAME}/srv/
 )
 
 # Testing

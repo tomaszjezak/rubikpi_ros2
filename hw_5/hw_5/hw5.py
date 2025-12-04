@@ -112,18 +112,20 @@ class Hw5Node(Node):
 
         self.tag_positions = {}
 
-        # Hardcoded waypoint patterns from hw3
+        # Robot's actual starting position (new coordinate system)
+        robot_x_init = 1.9685
+        robot_y_init = 0.7620
+
+        # Hardcoded waypoint patterns from hw3 (defined in old coordinate system where robot starts at 0,0)
         # Square drive pattern waypoints (starts by turning left 90 degrees)
-        waypoints_single_square = np.array([
+        waypoints_single_square_relative = np.array([
             [ 0.000000,  0.850000,  0.0],  # Drive to north 0.85m, face east to read tag
             [-0.850000,  0.850000, 1.5708],  # Drive west 0.85m, turn north to read tag
             [-0.850000,  0.000000,  3.14159],  # Drive south 0.85m, turn west to read tag
             [ 0.000000,  0.000000,  -1.5708],  # Drive east 0.85m, turn south to read tag
         ])
-        # Double square drive pattern waypoints
-        waypoints_double_square = np.vstack((waypoints_single_square, waypoints_single_square))
-        # Octagonal drive pattern
-        waypoints_octagon = np.array([
+        # Octagonal drive pattern (defined relative to 0,0)
+        waypoints_octagon_relative = np.array([
             # 0. Drive forward by 0.425. Face up 45 degrees to read tag
             [ 0.425000, 0.000000, 0.7854],
             # Now we are on the octagon edge
@@ -144,7 +146,18 @@ class Hw5Node(Node):
             # 8. Go diagonal up-right by sqrt(2)*0.425
             [ 0.425000, 0.000000, 0.7854],
         ])
-        # Double octagonal drive pattern waypoints
+
+        # Offset waypoints to robot's actual starting position
+        waypoints_single_square = waypoints_single_square_relative.copy()
+        waypoints_single_square[:, 0] += robot_x_init  # Offset x
+        waypoints_single_square[:, 1] += robot_y_init  # Offset y
+
+        waypoints_octagon = waypoints_octagon_relative.copy()
+        waypoints_octagon[:, 0] += robot_x_init  # Offset x
+        waypoints_octagon[:, 1] += robot_y_init  # Offset y
+
+        # Double patterns
+        waypoints_double_square = np.vstack((waypoints_single_square, waypoints_single_square))
         waypoints_double_octagon = np.vstack((waypoints_octagon, waypoints_octagon))
         # 0,0,0 waypoint for testing
         waypoints_zero = np.array([[0.0, 0.0, 0.0]])
@@ -175,7 +188,7 @@ class Hw5Node(Node):
         self.waypoint_reached = False
         self.tolerance = 0.30 # [m] - increased for more lenient waypoint reaching
         self.angle_tolerance = 0.35 # [rad] ≈20° - more chill about orientation
-        self.backward_threshold = np.deg2rad(100)  # Skip waypoints more than 100° behind
+        # self.backward_threshold = np.deg2rad(100)  # Skip waypoints more than 100° behind - DISABLED
 
         self.last_tag_detection_time = 0.0
         self.using_tag_localization = False
@@ -184,6 +197,10 @@ class Hw5Node(Node):
         # Request path from PRM planner service if enabled
         if self.get_parameter('use_prm_planner').get_parameter_value().bool_value:
             self._request_prm_path()
+        else:
+            # Use octagonal drive pattern when PRM is disabled
+            self.waypoints = waypoints_octagon
+            self.get_logger().info(f'Using octagonal path with {len(self.waypoints)} waypoints')
 
         self.dt = 0.1
         self.control_timer = self.create_timer(self.dt, self.control_loop)
@@ -477,17 +494,17 @@ class Hw5Node(Node):
             self.stop_robot()
             return
         
-        # Skip waypoints that are behind the robot
-        while self.current_waypoint_idx < len(self.waypoints):
-            if self.is_waypoint_behind(self.current_waypoint_idx):
-                self.get_logger().info(
-                    f'Skipping waypoint {self.current_waypoint_idx} '
-                    f'(more than {np.degrees(self.backward_threshold):.0f}° behind robot)'
-                )
-                self.current_waypoint_idx += 1
-                self.waypoint_reached = False
-            else:
-                break
+        # Skip waypoints that are behind the robot - DISABLED
+        # while self.current_waypoint_idx < len(self.waypoints):
+        #     if self.is_waypoint_behind(self.current_waypoint_idx):
+        #         self.get_logger().info(
+        #             f'Skipping waypoint {self.current_waypoint_idx} '
+        #             f'(more than {np.degrees(self.backward_threshold):.0f}° behind robot)'
+        #         )
+        #         self.current_waypoint_idx += 1
+        #         self.waypoint_reached = False
+        #     else:
+        #         break
 
         if self.current_waypoint_idx >= len(self.waypoints):
             # Only log once when all waypoints are reached

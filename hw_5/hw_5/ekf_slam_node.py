@@ -204,6 +204,13 @@ class EKF_SLAM_Node(Node):
         """Store latest control input and detect turn commands"""
         self.last_u = np.array([[msg.linear.x], [msg.angular.z]])
         self.last_u_time = self.get_clock().now()
+
+        # Log cmd_vel (throttled)
+        if not hasattr(self, '_cmd_vel_log_counter'):
+            self._cmd_vel_log_counter = 0
+        self._cmd_vel_log_counter += 1
+        if self._cmd_vel_log_counter % 100 == 0:
+            self.get_logger().info(f'[CMD_VEL] v={msg.linear.x:.3f} m/s, ω={msg.angular.z:.3f} rad/s')
         
         # Detect turn command: linear velocity near zero but angular velocity non-zero
         # This indicates pure rotation (wheels turning in opposite directions)
@@ -222,12 +229,12 @@ class EKF_SLAM_Node(Node):
     
     def detections_callback(self, msg):
         """Store latest detections"""
-        if len(msg.detections) > 0:
-            tag_ids = [str(d.id) for d in msg.detections]
-            self.get_logger().info(f'[DETECTIONS] {len(msg.detections)} tag(s): {", ".join(tag_ids)}')
-        else:
-            # Log when callback is called but no detections (throttled)
-            if self.tag_log_counter % 50 == 0:  # Every 5 seconds
+        # Throttle all detection logs (every 10 seconds at 10Hz)
+        if self.tag_log_counter % 100 == 0:
+            if len(msg.detections) > 0:
+                tag_ids = [str(d.id) for d in msg.detections]
+                self.get_logger().info(f'[DETECTIONS] {len(msg.detections)} tag(s): {", ".join(tag_ids)}')
+            else:
                 self.get_logger().info('[DETECTIONS] Callback received but no tags detected')
         self.latest_detections = msg
         self.latest_detections_time = self.get_clock().now()
@@ -283,7 +290,7 @@ class EKF_SLAM_Node(Node):
         
         if self.latest_detections is None:
             # Log when no detections have been received (throttled)
-            if self.log_tag_filtering and self.tag_log_counter % 50 == 0:
+            if self.log_tag_filtering and self.tag_log_counter % 100 == 0:
                 self.get_logger().info('[TAG FILTERING] No detections received yet (latest_detections is None)')
             return []
         
@@ -292,7 +299,7 @@ class EKF_SLAM_Node(Node):
             time_diff = (self.get_clock().now() - self.latest_detections_time).nanoseconds / 1e9
             if time_diff > 0.25:
                 # Log when detections are stale (throttled)
-                if self.log_tag_filtering and self.tag_log_counter % 50 == 0:
+                if self.log_tag_filtering and self.tag_log_counter % 100 == 0:
                     self.get_logger().info(f'[TAG FILTERING] Detections are stale (age={time_diff:.2f}s > 0.25s)')
                 return []
         
@@ -348,8 +355,8 @@ class EKF_SLAM_Node(Node):
             used_tags.append((tag_id, r, b))
             measurements_with_ids.append((tag_id, r, b))
         
-        # Log tag filtering details (throttled: every 10 updates = ~1 second at 10Hz)
-        if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+        # Log tag filtering details (throttled: every 100 updates = ~10 seconds at 10Hz)
+        if self.log_tag_filtering and self.tag_log_counter % 100 == 0:
             if len(all_detected_tags) > 0:
                 log_lines = [f'[TAG FILTERING] Detected {len(all_detected_tags)} tag(s): {all_detected_tags}']
                 
@@ -415,8 +422,8 @@ class EKF_SLAM_Node(Node):
             # No measurements, just predict
             z = np.array([]).reshape(0, 2)
             landmark_indices = None
-            # Log when no tags are used (throttled: every 10 updates)
-            if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+            # Log when no tags are used (throttled: every 100 updates = ~10 seconds)
+            if self.log_tag_filtering and self.tag_log_counter % 100 == 0:
                 self.get_logger().info('[EKF UPDATE] No tags used - prediction only')
         else:
             # Separate measurements and tag IDs
@@ -438,8 +445,8 @@ class EKF_SLAM_Node(Node):
                     landmark_indices.append(nLM_before + new_tag_counter)
                     new_tag_counter += 1
 
-            # Log which tags we're processing (throttled: every 10 updates)
-            if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+            # Log which tags we're processing (throttled: every 100 updates = ~10 seconds)
+            if self.log_tag_filtering and self.tag_log_counter % 100 == 0:
                 new_tags = [tid for tid in tag_ids if tid not in self.tag_id_to_landmark_index]
                 if new_tags:
                     self.get_logger().info(f'[EKF UPDATE] New tags detected: {new_tags}')

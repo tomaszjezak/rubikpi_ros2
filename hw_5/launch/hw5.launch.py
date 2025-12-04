@@ -134,7 +134,7 @@ def generate_launch_description():
                     'start_y': 0.7620,
                     'goal_x': 0.31,   # 22" to the right of Tag 4
                     'goal_y': 2.117725,   # +0.5m in y direction from previous
-                    'use_prm_planner': True,  # Enable PRM path planning
+                    'use_prm_planner': False,  # Disable PRM path planning
                     'enable_movement': LaunchConfiguration('enable_movement'),
                 }],
                 arguments=['--planning-mode', LaunchConfiguration('planning_mode')]
