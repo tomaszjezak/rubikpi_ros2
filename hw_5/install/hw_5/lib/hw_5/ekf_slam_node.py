@@ -1,0 +1,773 @@
+#!/usr/bin/env python3
+"""
+EKF SLAM ROS2 Node
+Main SLAM processing node that integrates with ROS2
+"""
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Twist, PoseStamped, TransformStamped
+from tf2_ros import Buffer, TransformListener, TransformBroadcaster
+import numpy as np
+import math
+import time
+import pickle
+import os
+from pathlib import Path
+
+# Try to import apriltag_msgs, fallback if not available
+try:
+    from apriltag_msgs.msg import AprilTagDetectionArray
+    APRILTAG_AVAILABLE = True
+except ImportError:
+    APRILTAG_AVAILABLE = False
+    print("Warning: apriltag_msgs not available. AprilTag detection will be disabled.")
+
+from hw_5.srv import GetWorkspaceBounds
+
+try:
+    from .ekf_slam_core import (
+        ekf_slam, ROBOT_STATE_SIZE, LM_SIZE, calc_n_lm,
+        get_landmark_position_from_state, pi_2_pi
+    )
+except ImportError:
+    from ekf_slam_core import (
+        ekf_slam, ROBOT_STATE_SIZE, LM_SIZE, calc_n_lm,
+        get_landmark_position_from_state, pi_2_pi
+    )
+
+
+class EKF_SLAM_Node(Node):
+    def __init__(self):
+        super().__init__('ekf_slam_node')
+
+        # Declare parameters
+        self.declare_parameter('max_range', 1.50)
+        self.declare_parameter('max_angular', 0.524)  # 45° FOV cone (±45° = 90° total)
+        self.declare_parameter('dt', 0.1)
+        self.declare_parameter('process_noise_v', 0.2)
+        self.declare_parameter('process_noise_w', 0.1)
+        self.declare_parameter('measurement_noise_r', 0.1)
+        self.declare_parameter('measurement_noise_b', 0.1)
+        self.declare_parameter('state_cov_x', 0.5)
+        self.declare_parameter('state_cov_y', 0.5)
+        self.declare_parameter('state_cov_yaw', 0.5)
+        self.declare_parameter('log_tag_filtering', True)  # Enable detailed tag filtering logs
+        
+        # Get parameters
+        self.max_range = self.get_parameter('max_range').get_parameter_value().double_value
+        self.max_angular = self.get_parameter('max_angular').get_parameter_value().double_value
+        self.dt = self.get_parameter('dt').get_parameter_value().double_value
+        process_noise_v = self.get_parameter('process_noise_v').get_parameter_value().double_value
+        process_noise_w = self.get_parameter('process_noise_w').get_parameter_value().double_value
+        measurement_noise_r = self.get_parameter('measurement_noise_r').get_parameter_value().double_value
+        measurement_noise_b = self.get_parameter('measurement_noise_b').get_parameter_value().double_value
+        state_cov_x = self.get_parameter('state_cov_x').get_parameter_value().double_value
+        state_cov_y = self.get_parameter('state_cov_y').get_parameter_value().double_value
+        state_cov_yaw = self.get_parameter('state_cov_yaw').get_parameter_value().double_value
+        self.log_tag_filtering = self.get_parameter('log_tag_filtering').get_parameter_value().bool_value
+
+        # Build noise matrices
+        self.Q = np.diag([process_noise_v, process_noise_w]) ** 2
+        self.R = np.diag([measurement_noise_r, measurement_noise_b]) ** 2
+        self.Cx = np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
+
+        # Log all parameters from YAML
+        self.get_logger().info('=' * 70)
+        self.get_logger().info('[PARAMETERS LOADED FROM YAML]')
+        self.get_logger().info(f'  max_range: {self.max_range}')
+        self.get_logger().info(f'  max_angular: {self.max_angular}')
+        self.get_logger().info(f'  dt: {self.dt}')
+        self.get_logger().info(f'  process_noise_v: {process_noise_v}')
+        self.get_logger().info(f'  process_noise_w: {process_noise_w}')
+        self.get_logger().info(f'  measurement_noise_r: {measurement_noise_r}')
+        self.get_logger().info(f'  measurement_noise_b: {measurement_noise_b}')
+        self.get_logger().info(f'  state_cov_x: {state_cov_x}')
+        self.get_logger().info(f'  state_cov_y: {state_cov_y}')
+        self.get_logger().info(f'  state_cov_yaw: {state_cov_yaw}')
+        self.get_logger().info('=' * 70)
+
+        # Initialize TF
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_broadcaster = TransformBroadcaster(self)
+
+        # Initialize EKF state with ONLY robot pose (true SLAM - landmarks discovered dynamically)
+        # Robot starts at old (0,0) = new (1.9685, 0.7620) in transformed coordinate system
+        # Initial yaw = π/2 (90°) to face upwards (positive Y direction)
+        self.xEst = np.array([[1.9685], [0.7620], [np.pi/2]])  # [x, y, yaw]
+
+        # Initialize covariance matrix with ONLY robot state
+        # Landmarks will be added dynamically as they are observed
+        robot_cov = np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
+        self.PEst = robot_cov.copy()
+
+        self.get_logger().info('EKF SLAM initialized with robot-only state (true SLAM mode)')
+        self.get_logger().info(f'Initial pose: x={self.xEst[0,0]:.3f}m, y={self.xEst[1,0]:.3f}m, yaw={math.degrees(self.xEst[2,0]):.1f}°')
+
+        # Storage
+        self.trajectory_history = []  # Full trajectory at EKF update rate
+        self.trajectory_1hz = []  # Trajectory sampled at 1Hz for plotting
+        self.waypoint_timestamps = []  # List of (waypoint_idx, timestamp, x, y, yaw)
+        self.last_u = np.array([[0.0], [0.0]])
+        self.last_u_time = None
+        self.is_turning = False  # Flag to detect pure rotation commands
+        self.prev_is_turning = False  # Track previous state to detect transitions
+        
+        # Waypoint detection - use same waypoints and tolerance as hw5.py
+        # These match the waypoints defined in hw5.py
+        self.waypoints = np.array([
+            [ 0.000000,  0.850000,  0.0],
+            [-0.850000,  0.850000, 1.5708],
+            [-0.850000,  0.000000,  3.14159],
+            [ 0.000000,  0.000000,  -1.5708],
+        ])
+        self.waypoint_tolerance = 0.15  # meters - same as hw5.py tolerance
+        self.reached_waypoints = set()  # Track which waypoints we've already logged
+        
+        # Latest detections
+        self.latest_detections = None
+        self.latest_detections_time = None
+
+        # Tag ID to landmark index mapping (empty - landmarks discovered dynamically)
+        # Maps AprilTag ID -> landmark index in state vector
+        self.tag_id_to_landmark_index = {}
+
+        # Subscriptions
+        self.cmd_vel_sub = self.create_subscription(
+            Twist,
+            '/cmd_vel',
+            self.cmd_vel_callback,
+            10
+        )
+        
+        if APRILTAG_AVAILABLE:
+            self.detections_sub = self.create_subscription(
+                AprilTagDetectionArray,
+                '/detections',
+                self.detections_callback,
+                10
+            )
+            self.get_logger().info('Subscribed to /detections topic for AprilTag detections')
+        else:
+            self.get_logger().warn('AprilTag detections disabled - apriltag_msgs not available')
+        
+        # Publishers
+        self.robot_pose_pub = self.create_publisher(
+            PoseStamped,
+            '/ekf_slam/robot_pose',
+            10
+        )
+
+        # Services
+        self.bounds_service = self.create_service(
+            GetWorkspaceBounds,
+            'get_workspace_bounds',
+            self.handle_get_workspace_bounds
+        )
+
+        # Timer for EKF update
+        self.ekf_timer = self.create_timer(self.dt, self.ekf_update)
+        
+        # Timer for 1Hz trajectory logging
+        self.trajectory_log_timer = self.create_timer(1.0, self.log_trajectory_1hz)
+        
+        # Track previous values for change detection
+        self.prev_robot_state = np.array([[1.9685], [0.7620], [np.pi/2]])
+        self.update_count = 0
+        self.tag_log_counter = 0  # Counter for throttling tag filtering logs
+        
+        # Data file path for saving
+        self.data_file_path = os.path.join(
+            os.path.expanduser('~'), '.ros', 'slam_data.pkl'
+        )
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(self.data_file_path), exist_ok=True)
+        
+        # Broadcast initial TF immediately so odom frame exists right away
+        # This ensures other nodes (like hw5.py) can look up odom -> base_link immediately
+        self.broadcast_tf()
+        
+        # EKF SLAM initialization logs commented out
+        # self.get_logger().info('=' * 70)
+        # self.get_logger().info('EKF SLAM Node initialized')
+        # self.get_logger().info(f'Update period: {self.dt}s | Max range: {self.max_range}m')
+        # self.get_logger().info('=' * 70)
+    
+    def cmd_vel_callback(self, msg):
+        """Store latest control input and detect turn commands"""
+        self.last_u = np.array([[msg.linear.x], [msg.angular.z]])
+        self.last_u_time = self.get_clock().now()
+        
+        # Detect turn command: linear velocity near zero but angular velocity non-zero
+        # This indicates pure rotation (wheels turning in opposite directions)
+        linear_threshold = 0.01  # 1cm/s threshold
+        angular_threshold = 0.05  # ~3 deg/s threshold
+        
+        self.prev_is_turning = self.is_turning  # Store previous state
+        
+        if abs(msg.linear.x) < linear_threshold and abs(msg.angular.z) > angular_threshold:
+            self.is_turning = True
+            # Log when we first detect turning (transition from False to True)
+            # if not self.prev_is_turning:
+            #     self.get_logger().info(f'[TURN DETECTED] Pure rotation command: v={msg.linear.x:.3f}m/s, ω={math.degrees(msg.angular.z):.2f}°/s')
+        else:
+            self.is_turning = False
+    
+    def detections_callback(self, msg):
+        """Store latest detections"""
+        if len(msg.detections) > 0:
+            tag_ids = [str(d.id) for d in msg.detections]
+            self.get_logger().info(f'[DETECTIONS] {len(msg.detections)} tag(s): {", ".join(tag_ids)}')
+        else:
+            # Log when callback is called but no detections (throttled)
+            if self.tag_log_counter % 50 == 0:  # Every 5 seconds
+                self.get_logger().info('[DETECTIONS] Callback received but no tags detected')
+        self.latest_detections = msg
+        self.latest_detections_time = self.get_clock().now()
+    
+    def check_waypoint_reached(self, robot_state):
+        """Check if robot is near any waypoint and log it if reached"""
+        robot_x = robot_state[0, 0]
+        robot_y = robot_state[1, 0]
+        robot_yaw = robot_state[2, 0]
+        
+        for waypoint_idx, waypoint in enumerate(self.waypoints):
+            # Skip if already logged
+            if waypoint_idx in self.reached_waypoints:
+                continue
+            
+            wp_x, wp_y, wp_yaw = waypoint
+            # Check distance to waypoint
+            distance = math.sqrt((robot_x - wp_x)**2 + (robot_y - wp_y)**2)
+            
+            if distance < self.waypoint_tolerance:
+                # Waypoint reached!
+                timestamp = self.get_clock().now().nanoseconds / 1e9
+                self.waypoint_timestamps.append((
+                    waypoint_idx,
+                    timestamp,
+                    float(robot_x),
+                    float(robot_y),
+                    float(robot_yaw)
+                ))
+                self.reached_waypoints.add(waypoint_idx)
+                # self.get_logger().info(f'[WAYPOINT REACHED] Waypoint {waypoint_idx} at [{robot_x:.3f}, {robot_y:.3f}], yaw={math.degrees(robot_yaw):.1f}°')
+                break  # Only log one waypoint per check
+    
+    def log_trajectory_1hz(self):
+        """Log trajectory data at 1Hz for visualization"""
+        robot_state = self.xEst[0:ROBOT_STATE_SIZE].copy()
+        timestamp = self.get_clock().now().nanoseconds / 1e9
+        self.trajectory_1hz.append((
+            timestamp,
+            float(robot_state[0, 0]),
+            float(robot_state[1, 0]),
+            float(robot_state[2, 0])
+        ))
+    
+    def convert_detections_to_measurements(self):
+        """
+        Convert AprilTag detections to range/bearing measurements with tag IDs
+        
+        Returns:
+            measurements_with_ids: List of tuples (tag_id, range, bearing)
+        """
+        measurements_with_ids = []
+        
+        if self.latest_detections is None:
+            # Log when no detections have been received (throttled)
+            if self.log_tag_filtering and self.tag_log_counter % 50 == 0:
+                self.get_logger().info('[TAG FILTERING] No detections received yet (latest_detections is None)')
+            return []
+        
+        # Check if detections are fresh (< 0.25s old)
+        if self.latest_detections_time is not None:
+            time_diff = (self.get_clock().now() - self.latest_detections_time).nanoseconds / 1e9
+            if time_diff > 0.25:
+                # Log when detections are stale (throttled)
+                if self.log_tag_filtering and self.tag_log_counter % 50 == 0:
+                    self.get_logger().info(f'[TAG FILTERING] Detections are stale (age={time_diff:.2f}s > 0.25s)')
+                return []
+        
+        # Track all detected tags for logging
+        all_detected_tags = []
+        filtered_by_distance = []
+        filtered_by_angle = []
+        filtered_by_tf = []
+        used_tags = []
+        
+        for detection in self.latest_detections.detections:
+            tag_id = detection.id
+            all_detected_tags.append(tag_id)
+            
+            # apriltag_ros creates TF frame as tag_{tag_id}
+            frame_name = f'tag_{tag_id}'
+            
+            # Lookup TF transform: base_link -> tag_{tag_id}
+            if not self.tf_buffer.can_transform('base_link', frame_name, rclpy.time.Time()):
+                filtered_by_tf.append(tag_id)
+                continue
+            
+            transform = self.tf_buffer.lookup_transform(
+                'base_link',
+                frame_name,
+                rclpy.time.Time()
+            )
+            
+            # Extract translation
+            dx = transform.transform.translation.x
+            dy = transform.transform.translation.y
+            dz = transform.transform.translation.z
+            
+            # Calculate range (2D for ground-plane SLAM)
+            r = math.sqrt(dx*dx + dy*dy)
+            
+            # Filter by max_range
+            if r > self.max_range:
+                filtered_by_distance.append((tag_id, r))
+                continue
+            
+            # Calculate bearing (relative to robot heading in base_link frame)
+            b = math.atan2(dy, dx)
+            b = pi_2_pi(b)
+
+            # Filter by field of view (FOV cone)
+            # Only use tags within ±max_angular from forward direction (x-axis of base_link)
+            if abs(b) > self.max_angular:
+                filtered_by_angle.append((tag_id, r, b))
+                continue
+
+            # Tag passed all filters - will be used
+            used_tags.append((tag_id, r, b))
+            measurements_with_ids.append((tag_id, r, b))
+        
+        # Log tag filtering details (throttled: every 10 updates = ~1 second at 10Hz)
+        if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+            if len(all_detected_tags) > 0:
+                log_lines = [f'[TAG FILTERING] Detected {len(all_detected_tags)} tag(s): {all_detected_tags}']
+                
+                # Log used tags
+                if len(used_tags) > 0:
+                    used_str = ', '.join([f'Tag {tid}: r={r:.2f}m, b={math.degrees(b):.1f}° (USED)' 
+                                         for tid, r, b in used_tags])
+                    log_lines.append(f'  USED ({len(used_tags)}): {used_str}')
+                
+                # Log filtered by distance
+                if len(filtered_by_distance) > 0:
+                    dist_str = ', '.join([f'Tag {tid}: r={r:.2f}m > max_range({self.max_range:.2f}m)' 
+                                         for tid, r in filtered_by_distance])
+                    log_lines.append(f'  FILTERED - distance ({len(filtered_by_distance)}): {dist_str}')
+                
+                # Log filtered by angle
+                if len(filtered_by_angle) > 0:
+                    angle_str = ', '.join([f'Tag {tid}: r={r:.2f}m, b={math.degrees(b):.1f}° > max_angular({math.degrees(self.max_angular):.1f}°)' 
+                                          for tid, r, b in filtered_by_angle])
+                    log_lines.append(f'  FILTERED - angle ({len(filtered_by_angle)}): {angle_str}')
+                
+                # Log filtered by TF
+                if len(filtered_by_tf) > 0:
+                    tf_str = ', '.join([f'Tag {tid}' for tid in filtered_by_tf])
+                    log_lines.append(f'  FILTERED - no TF ({len(filtered_by_tf)}): {tf_str}')
+                
+                self.get_logger().info('\n'.join(log_lines))
+            else:
+                # Log when no tags detected at all
+                self.get_logger().info('[TAG FILTERING] No tags detected')
+        
+        return measurements_with_ids
+    
+    def ekf_update(self):
+        """Main EKF update loop"""
+        self.update_count += 1
+        
+        # Get control input - check if it's stale
+        # If no cmd_vel received in last 0.2s, assume robot stopped
+        cmd_vel_timeout = 0.2  # 200ms timeout
+        if self.last_u_time is None:
+            # No command ever received, use zero
+            u = np.array([[0.0], [0.0]])
+        else:
+            time_since_cmd = (self.get_clock().now() - self.last_u_time).nanoseconds / 1e9
+            if time_since_cmd > cmd_vel_timeout:
+                # Command is stale - robot has stopped
+                u = np.array([[0.0], [0.0]])
+                # Also reset is_turning flag
+                if self.is_turning:
+                    self.is_turning = False
+            else:
+                # Command is fresh, use it
+                u = self.last_u.copy()
+        
+        # Get landmark count before update
+        nLM_before = calc_n_lm(self.xEst)
+        
+        # Get measurements with tag IDs
+        measurements_with_ids = self.convert_detections_to_measurements()
+        
+        if len(measurements_with_ids) == 0:
+            # No measurements, just predict
+            z = np.array([]).reshape(0, 2)
+            landmark_indices = None
+            # Log when no tags are used (throttled: every 10 updates)
+            if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+                self.get_logger().info('[EKF UPDATE] No tags used - prediction only')
+        else:
+            # Separate measurements and tag IDs
+            tag_ids = [m[0] for m in measurements_with_ids]
+            z = np.array([[m[1], m[2]] for m in measurements_with_ids])  # [range, bearing]
+
+            # Map tag IDs to landmark indices using tag ID directly
+            # Known tags: use existing mapping
+            # New tags: assign sequential indices starting from nLM_before
+            landmark_indices = []
+            new_tag_counter = 0
+
+            for tag_id in tag_ids:
+                if tag_id in self.tag_id_to_landmark_index:
+                    # Known tag: use existing landmark index
+                    landmark_indices.append(self.tag_id_to_landmark_index[tag_id])
+                else:
+                    # New tag: will be created at next available index
+                    landmark_indices.append(nLM_before + new_tag_counter)
+                    new_tag_counter += 1
+
+            # Log which tags we're processing (throttled: every 10 updates)
+            if self.log_tag_filtering and self.tag_log_counter % 10 == 0:
+                new_tags = [tid for tid in tag_ids if tid not in self.tag_id_to_landmark_index]
+                if new_tags:
+                    self.get_logger().info(f'[EKF UPDATE] New tags detected: {new_tags}')
+                self.get_logger().info(f'[EKF UPDATE] Using {len(tag_ids)} tag(s): {tag_ids} for SLAM')
+        
+        # Run EKF SLAM with tag ID-based data association
+        # Pass is_turning flag to prevent position updates during pure rotation
+        # Note: m_dist_th (2.0) is unused when landmark_indices is provided (tag ID mode)
+        self.xEst, self.PEst = ekf_slam(
+            self.xEst, self.PEst, u, z,
+            self.dt, self.Q, self.R, self.Cx, 2.0,  # m_dist_th unused in tag ID mode
+            landmark_indices=landmark_indices,
+            is_turning=self.is_turning
+        )
+        
+        # Get robot state and landmark count after update
+        robot_state = self.xEst[0:ROBOT_STATE_SIZE].copy()
+        nLM_after = calc_n_lm(self.xEst)
+
+        # Update tag ID to landmark index mapping for new landmarks
+        # EKF SLAM behavior:
+        # - First detection: Creates new landmark in state vector (extends xEst and PEst)
+        # - Re-observation: Updates existing landmark using Kalman filter (improves estimate, reduces uncertainty)
+        if len(measurements_with_ids) > 0:
+            tag_ids = [m[0] for m in measurements_with_ids]
+
+            # Check for new landmarks (state vector grew)
+            if nLM_after > nLM_before:
+                # Map new tag IDs to newly created landmarks
+                new_tag_index = 0
+                for tag_id in tag_ids:
+                    if tag_id not in self.tag_id_to_landmark_index:
+                        landmark_idx = nLM_before + new_tag_index
+                        self.tag_id_to_landmark_index[tag_id] = landmark_idx
+                        lm = get_landmark_position_from_state(self.xEst, landmark_idx)
+                        self.get_logger().info(f'[NEW LANDMARK] Tag {tag_id} at [{lm[0,0]:.3f}, {lm[1,0]:.3f}]m (index {landmark_idx})')
+                        new_tag_index += 1
+                        if new_tag_index >= (nLM_after - nLM_before):
+                            break
+
+            # Log when we're updating existing landmarks (re-observation) - throttled
+            known_tags_observed = [tid for tid in tag_ids if tid in self.tag_id_to_landmark_index and nLM_after == nLM_before]
+            if known_tags_observed and self.update_count % 10 == 0:
+                tag_str = ', '.join([str(tid) for tid in known_tags_observed])
+                # Commented to reduce spam, but useful for debugging
+                # self.get_logger().info(f'[UPDATE LANDMARKS] Re-observing tags: {tag_str} (improving estimates)')
+
+        # Detect robot state changes
+        state_change = np.linalg.norm(robot_state - self.prev_robot_state)
+        if state_change > 0.01:  # Log if moved more than 1cm
+            dx = robot_state[0, 0] - self.prev_robot_state[0, 0]
+            dy = robot_state[1, 0] - self.prev_robot_state[1, 0]
+            dyaw = robot_state[2, 0] - self.prev_robot_state[2, 0]
+            #self.get_logger().info(f'[ROBOT MOVE] Δx={dx:.3f}m, Δy={dy:.3f}m, Δyaw={math.degrees(dyaw):.2f}°')
+            self.prev_robot_state = robot_state.copy()
+        
+        # Store trajectory history
+        self.trajectory_history.append(robot_state)
+        
+        # Check if waypoint reached
+        self.check_waypoint_reached(robot_state)
+        
+        # Publish robot pose
+        self.publish_robot_pose()
+        
+        # Broadcast robot TF: odom -> base_link (EKF estimated pose)
+        self.broadcast_tf()
+        
+        # Note: Landmark positions are in EKF state vector and published via robot_pose topic
+        # AprilTag already broadcasts tag_{tag_id} relative to base_link for detections
+        # EKF estimates landmarks in odom frame, but we don't need to broadcast them as TF
+        # since AprilTag TFs provide the detection data we need
+        
+        # Increment tag log counter for throttling
+        self.tag_log_counter += 1
+        
+        # Periodic status update every 50 updates (~5 seconds at 10Hz)
+        if self.update_count % 50 == 0:
+            self.log_status(robot_state, u, z, nLM_after)
+            self.print_state_vector()
+    
+    def publish_robot_pose(self):
+        """Publish estimated robot pose"""
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'odom'
+        
+        msg.pose.position.x = float(self.xEst[0, 0])
+        msg.pose.position.y = float(self.xEst[1, 0])
+        msg.pose.position.z = 0.0
+        
+        # Convert yaw to quaternion
+        yaw = self.xEst[2, 0]
+        cy = math.cos(yaw * 0.5)
+        sy = math.sin(yaw * 0.5)
+        msg.pose.orientation.w = cy
+        msg.pose.orientation.x = 0.0
+        msg.pose.orientation.y = 0.0
+        msg.pose.orientation.z = sy
+        
+        self.robot_pose_pub.publish(msg)
+    
+    def broadcast_tf(self):
+        """Broadcast TF transform: odom -> base_link"""
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'odom'
+        t.child_frame_id = 'base_link'
+        
+        t.transform.translation.x = float(self.xEst[0, 0])
+        t.transform.translation.y = float(self.xEst[1, 0])
+        t.transform.translation.z = 0.0
+        
+        # Convert yaw to quaternion
+        yaw = self.xEst[2, 0]
+        cy = math.cos(yaw * 0.5)
+        sy = math.sin(yaw * 0.5)
+        t.transform.rotation.w = cy
+        t.transform.rotation.x = 0.0
+        t.transform.rotation.y = 0.0
+        t.transform.rotation.z = sy
+        
+        self.tf_broadcaster.sendTransform(t)
+    
+    def log_status(self, robot_state, u, z, nLM):
+        """Log comprehensive status update"""
+        # EKF SLAM logs commented out to reduce spam
+        # self.get_logger().info('-' * 70)
+        # self.get_logger().info(f'[EKF STATUS] Update #{self.update_count} | Runtime: {self.update_count * self.dt:.1f}s')
+        # self.get_logger().info(f'  Robot Pose: x={robot_state[0,0]:.3f}m, y={robot_state[1,0]:.3f}m, yaw={math.degrees(robot_state[2,0]):.1f}°')
+        # self.get_logger().info(f'  Control: v={u[0,0]:.3f}m/s, ω={math.degrees(u[1,0]):.1f}°/s')
+        # self.get_logger().info(f'  Measurements: {len(z)} tag(s) in this update')
+        # self.get_logger().info(f'  Landmarks: {nLM} total')
+        # 
+        # # Log landmark positions and covariance
+        # if nLM > 0:
+        #     self.get_logger().info('  Landmark Positions and Covariances:')
+        #     # Sort by tag ID for consistent output
+        #     tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
+        #     for tag_id in tag_id_list:
+        #         landmark_idx = self.tag_id_to_landmark_index[tag_id]
+        #         lm = get_landmark_position_from_state(self.xEst, landmark_idx)
+        #         # Get covariance for this landmark
+        #         lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
+        #         cov_xx = self.PEst[lm_start_idx, lm_start_idx]
+        #         cov_yy = self.PEst[lm_start_idx + 1, lm_start_idx + 1]
+        #         cov_xy = self.PEst[lm_start_idx, lm_start_idx + 1]
+        #         std_x = math.sqrt(cov_xx)
+        #         std_y = math.sqrt(cov_yy)
+        #         # Calculate correlation coefficient
+        #         correlation = cov_xy / (std_x * std_y) if (std_x * std_y) > 0 else 0.0
+        #         # Calculate 2σ uncertainty ellipse semi-axes (95% confidence)
+        #         eigenvals, eigenvecs = np.linalg.eigh(np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]]))
+        #         semi_major = 2.0 * math.sqrt(max(eigenvals))  # 2σ
+        #         semi_minor = 2.0 * math.sqrt(min(eigenvals))  # 2σ
+        #         self.get_logger().info(f'    Tag {tag_id}: pos=[{lm[0,0]:.4f}, {lm[1,0]:.4f}]m')
+        #         self.get_logger().info(f'      Covariance: σ_x={std_x:.4f}m, σ_y={std_y:.4f}m, σ_xy={cov_xy:.6f}')
+        #         self.get_logger().info(f'      Correlation: {correlation:.4f}, 2σ ellipse: [{semi_major:.4f}, {semi_minor:.4f}]m')
+        # 
+        # # Log robot pose uncertainty
+        # robot_cov_xx = self.PEst[0, 0]
+        # robot_cov_yy = self.PEst[1, 1]
+        # robot_cov_yaw = self.PEst[2, 2]
+        # self.get_logger().info(f'  Robot Uncertainty: σ_x={math.sqrt(robot_cov_xx):.3f}m, σ_y={math.sqrt(robot_cov_yy):.3f}m, σ_yaw={math.degrees(math.sqrt(robot_cov_yaw)):.1f}°')
+        # self.get_logger().info('-' * 70)
+        pass
+    
+    def print_state_vector(self):
+        """Print the current state vector in a readable format"""
+        # EKF SLAM logs commented out to reduce spam
+        # nLM = calc_n_lm(self.xEst)
+        # 
+        # self.get_logger().info('=' * 70)
+        # self.get_logger().info('[STATE VECTOR]')
+        # 
+        # # Robot state
+        robot_x = self.xEst[0, 0]
+        robot_y = self.xEst[1, 0]
+        robot_yaw = self.xEst[2, 0]
+        self.get_logger().info(f'  Robot: x={robot_x:.4f}m, y={robot_y:.4f}m, yaw={math.degrees(robot_yaw):.2f}°')
+        
+        # # Landmarks (sorted by tag ID)
+        # if nLM > 0:
+        #     self.get_logger().info(f'  Landmarks ({nLM} total):')
+        #     tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
+        #     for tag_id in tag_id_list:
+        #         landmark_idx = self.tag_id_to_landmark_index[tag_id]
+        #         lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
+        #         lm_x = self.xEst[lm_start_idx, 0]
+        #         lm_y = self.xEst[lm_start_idx + 1, 0]
+        #         self.get_logger().info(f'    Tag {tag_id}: x={lm_x:.4f}m, y={lm_y:.4f}m')
+        # 
+        # # State vector size
+        # state_size = len(self.xEst)
+        # self.get_logger().info(f'  State vector size: {state_size} (robot: {ROBOT_STATE_SIZE}, landmarks: {state_size - ROBOT_STATE_SIZE})')
+        # self.get_logger().info('=' * 70)
+        pass
+    
+    def log_landmark_covariances(self):
+        """Log detailed covariance information for all landmarks"""
+        nLM = calc_n_lm(self.xEst)
+        if nLM == 0:
+            return
+        
+        self.get_logger().info('=' * 70)
+        self.get_logger().info('[LANDMARK COVARIANCE REPORT]')
+        self.get_logger().info(f'Total landmarks: {nLM}')
+        
+        # Sort by tag ID for consistent output
+        tag_id_list = sorted(self.tag_id_to_landmark_index.keys())
+        
+        for tag_id in tag_id_list:
+            landmark_idx = self.tag_id_to_landmark_index[tag_id]
+            lm = get_landmark_position_from_state(self.xEst, landmark_idx)
+            lm_start_idx = ROBOT_STATE_SIZE + LM_SIZE * landmark_idx
+            
+            # Extract 2x2 covariance matrix for this landmark
+            cov_xx = self.PEst[lm_start_idx, lm_start_idx]
+            cov_yy = self.PEst[lm_start_idx + 1, lm_start_idx + 1]
+            cov_xy = self.PEst[lm_start_idx, lm_start_idx + 1]
+            cov_yx = self.PEst[lm_start_idx + 1, lm_start_idx]  # Should equal cov_xy
+            
+            std_x = math.sqrt(cov_xx)
+            std_y = math.sqrt(cov_yy)
+            correlation = cov_xy / (std_x * std_y) if (std_x * std_y) > 0 else 0.0
+            
+            # Eigenvalue decomposition for uncertainty ellipse
+            cov_matrix = np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]])
+            eigenvals, eigenvecs = np.linalg.eigh(cov_matrix)
+            semi_major_2sigma = 2.0 * math.sqrt(max(eigenvals))
+            semi_minor_2sigma = 2.0 * math.sqrt(min(eigenvals))
+            angle_rad = math.atan2(eigenvecs[1, 0], eigenvecs[0, 0])
+            angle_deg = math.degrees(angle_rad)
+            
+            self.get_logger().info(f'  Tag {tag_id}:')
+            self.get_logger().info(f'    Position: [{lm[0,0]:.6f}, {lm[1,0]:.6f}] m')
+            self.get_logger().info(f'    Covariance Matrix:')
+            self.get_logger().info(f'      [{cov_xx:.6f}, {cov_xy:.6f}]')
+            self.get_logger().info(f'      [{cov_yx:.6f}, {cov_yy:.6f}]')
+            self.get_logger().info(f'    Standard Deviations: σ_x={std_x:.6f} m, σ_y={std_y:.6f} m')
+            self.get_logger().info(f'    Correlation Coefficient: {correlation:.6f}')
+            self.get_logger().info(f'    2σ Uncertainty Ellipse (95% confidence):')
+            self.get_logger().info(f'      Semi-major axis: {semi_major_2sigma:.6f} m')
+            self.get_logger().info(f'      Semi-minor axis: {semi_minor_2sigma:.6f} m')
+            self.get_logger().info(f'      Orientation: {angle_deg:.2f}°')
+        
+        self.get_logger().info('=' * 70)
+
+    def compute_workspace_bounds(self):
+        """
+        Compute workspace bounding box from landmark positions
+
+        Returns:
+            tuple: (min_x, min_y, max_x, max_y) or raises RuntimeError if insufficient landmarks
+        """
+        nLM = calc_n_lm(self.xEst)
+        min_landmarks = 12  # Need at least 12 tags
+
+        if nLM < min_landmarks:
+            raise RuntimeError(f"FATAL: Only {nLM} landmarks detected, need at least {min_landmarks} for workspace bounds")
+
+        # Extract all landmark positions
+        landmark_positions = []
+        for i in range(nLM):
+            lm = get_landmark_position_from_state(self.xEst, i)
+            landmark_positions.append((lm[0, 0], lm[1, 0]))
+
+        # Compute bounds with no margin (margin = 0.0)
+        margin = 0.0
+        min_x = min(lm[0] for lm in landmark_positions) - margin
+        max_x = max(lm[0] for lm in landmark_positions) + margin
+        min_y = min(lm[1] for lm in landmark_positions) - margin
+        max_y = max(lm[1] for lm in landmark_positions) + margin
+
+        return (min_x, min_y, max_x, max_y)
+
+    def handle_get_workspace_bounds(self, request, response):
+        """
+        Service callback to get workspace bounds
+        Raises RuntimeError if insufficient landmarks (crashes the node)
+        """
+        min_x, min_y, max_x, max_y = self.compute_workspace_bounds()
+
+        response.min_x = min_x
+        response.min_y = min_y
+        response.max_x = max_x
+        response.max_y = max_y
+
+        self.get_logger().info(f'[WORKSPACE BOUNDS] Provided bounds: min=({min_x:.3f}, {min_y:.3f}), max=({max_x:.3f}, {max_y:.3f})')
+
+        return response
+
+    def save_slam_data(self):
+        """Save SLAM data to pickle file for post-processing visualization"""
+        try:
+            # Log detailed covariance information before saving
+            self.log_landmark_covariances()
+            
+            data = {
+                'trajectory_1hz': self.trajectory_1hz,  # List of (timestamp, x, y, yaw)
+                'waypoint_timestamps': self.waypoint_timestamps,  # List of (waypoint_idx, timestamp, x, y, yaw)
+                'final_state_vector': self.xEst.copy(),  # Final state vector
+                'final_covariance': self.PEst.copy(),  # Final covariance matrix
+                'tag_id_to_landmark_index': self.tag_id_to_landmark_index.copy(),  # Tag ID mapping
+                'robot_state_size': ROBOT_STATE_SIZE,
+                'landmark_size': LM_SIZE
+            }
+            
+            with open(self.data_file_path, 'wb') as f:
+                pickle.dump(data, f)
+            
+            self.get_logger().info(f'[DATA SAVED] SLAM data saved to {self.data_file_path}')
+            self.get_logger().info(f'  Trajectory samples (1Hz): {len(self.trajectory_1hz)}')
+            self.get_logger().info(f'  Waypoints reached: {len(self.waypoint_timestamps)}')
+            self.get_logger().info(f'  Landmarks: {len(self.tag_id_to_landmark_index)}')
+        except Exception as e:
+            self.get_logger().error(f'[DATA SAVE ERROR] Failed to save SLAM data: {e}')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = EKF_SLAM_Node()
+    
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info('EKF SLAM Node stopped by keyboard interrupt')
+    finally:
+        # Save data before shutdown
+        node.save_slam_data()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+

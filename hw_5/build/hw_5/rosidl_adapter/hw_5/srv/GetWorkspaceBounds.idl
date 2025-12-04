@@ -1,0 +1,25 @@
+// generated from rosidl_adapter/resource/srv.idl.em
+// with input from hw_5/srv/GetWorkspaceBounds.srv
+// generated code does not contain a copyright notice
+
+
+module hw_5 {
+  module srv {
+    @verbatim (language="comment", text=
+      "Request (empty - no parameters needed)")
+    struct GetWorkspaceBounds_Request {
+      uint8 structure_needs_at_least_one_member;
+    };
+    @verbatim (language="comment", text=
+      "Response")
+    struct GetWorkspaceBounds_Response {
+      double min_x;
+
+      double min_y;
+
+      double max_x;
+
+      double max_y;
+    };
+  };
+};

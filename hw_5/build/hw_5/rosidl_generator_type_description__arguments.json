@@ -1,0 +1,11 @@
+{
+  "package_name": "hw_5",
+  "output_dir": "/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/build/hw_5/rosidl_generator_type_description/hw_5",
+  "idl_tuples": [
+    "/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/build/hw_5/rosidl_adapter/hw_5:srv/GetWorkspaceBounds.idl"
+  ],
+  "include_paths": [
+    "service_msgs:/opt/ros/jazzy/share/service_msgs",
+    "builtin_interfaces:/opt/ros/jazzy/share/builtin_interfaces"
+  ]
+}

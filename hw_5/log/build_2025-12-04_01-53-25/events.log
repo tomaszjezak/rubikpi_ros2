@@ -1,0 +1,118 @@
+[0.000000] (-) TimerEvent: {}
+[0.000296] (hw_5) JobQueued: {'identifier': 'hw_5', 'dependencies': OrderedDict()}
+[0.000745] (hw_5) JobStarted: {'identifier': 'hw_5'}
+[0.013655] (hw_5) JobProgress: {'identifier': 'hw_5', 'progress': 'cmake'}
+[0.014559] (hw_5) Command: {'cmd': ['/usr/bin/cmake', '/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5', '-DCMAKE_INSTALL_PREFIX=/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/install/hw_5'], 'cwd': '/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/build/hw_5', 'env': OrderedDict({'LESSOPEN': '| /usr/bin/lesspipe %s', 'USER': 'ubuntu', 'SSH_CLIENT': '10.42.0.171 60772 22', 'CLAUDE_CODE_ENTRYPOINT': 'cli', 'GIT_EDITOR': 'true', 'XDG_SESSION_TYPE': 'tty', 'GIT_ASKPASS': '/home/ubuntu/.vscode-server/cli/servers/Stable-bf9252a2fb45be6893dd8870c0bf37e2e1766d61/server/extensions/git/dist/askpass.sh', 'SHLVL': '3', 'LD_LIBRARY_PATH': '/home/ubuntu/ros2_ws/install/prm_planner/lib:/home/ubuntu/ros2_ws/install/apriltag_ros/lib:/opt/ros/jazzy/opt/rviz_ogre_vendor/lib:/opt/ros/jazzy/lib/aarch64-linux-gnu:/opt/ros/jazzy/opt/gz_math_vendor/lib:/opt/ros/jazzy/opt/gz_utils_vendor/lib:/opt/ros/jazzy/opt/gz_cmake_vendor/lib:/opt/ros/jazzy/lib', 'BROWSER': '/home/ubuntu/.vscode-server/cli/servers/Stable-bf9252a2fb45be6893dd8870c0bf37e2e1766d61/server/bin/helpers/browser.sh', 'HOME': '/home/ubuntu', 'OLDPWD': '/home/ubuntu/.vscode-server', 'TERM_PROGRAM_VERSION': '1.106.3', 'VSCODE_IPC_HOOK_CLI': '/run/user/1000/vscode-ipc-76dcb5d9-e0ef-462e-98d7-e00bc375484a.sock', 'ROS_PYTHON_VERSION': '3', 'HOMEBREW_PREFIX': '/home/linuxbrew/.linuxbrew', 'VSCODE_GIT_ASKPASS_MAIN': '/home/ubuntu/.vscode-server/cli/servers/Stable-bf9252a2fb45be6893dd8870c0bf37e2e1766d61/server/extensions/git/dist/askpass-main.js', 'VSCODE_GIT_ASKPASS_NODE': '/home/ubuntu/.vscode-server/cli/servers/Stable-bf9252a2fb45be6893dd8870c0bf37e2e1766d61/server/node', 'SSL_CERT_FILE': '/usr/lib/ssl/cert.pem', 'VSCODE_PYTHON_AUTOACTIVATE_GUARD': '1', 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus', 'COLORTERM': 'truecolor', 'COLCON_PREFIX_PATH': '/home/ubuntu/ros2_ws/install', 'INFOPATH': '/home/linuxbrew/.linuxbrew/share/info:/home/linuxbrew/.linuxbrew/share/info:', 'ROS_DISTRO': 'jazzy', 'LOGNAME': 'ubuntu', '_': '/usr/bin/colcon', 'ROS_VERSION': '2', 'CLAUDE_CODE_SSE_PORT': '41630', 'XDG_SESSION_CLASS': 'user', 'TERM': 'xterm-256color', 'XDG_SESSION_ID': '6', 'OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE': 'delta', 'PATH': '/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/home/ubuntu/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/home/ubuntu/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/home/ubuntu/.vscode-server/cli/servers/Stable-bf9252a2fb45be6893dd8870c0bf37e2e1766d61/server/bin/remote-cli:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/opt/ros/jazzy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin', 'HOMEBREW_CELLAR': '/home/linuxbrew/.linuxbrew/Cellar', 'COREPACK_ENABLE_AUTO_PIN': '0', 'XDG_RUNTIME_DIR': '/run/user/1000', 'SSL_CERT_DIR': '/usr/lib/ssl/certs', 'NoDefaultCurrentDirectoryInExePath': '1', 'LANG': 'en_US.UTF-8', 'LS_COLORS': 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.avif=01;35:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:*~=00;90:*#=00;90:*.bak=00;90:*.crdownload=00;90:*.dpkg-dist=00;90:*.dpkg-new=00;90:*.dpkg-old=00;90:*.dpkg-tmp=00;90:*.old=00;90:*.orig=00;90:*.part=00;90:*.rej=00;90:*.rpmnew=00;90:*.rpmorig=00;90:*.rpmsave=00;90:*.swp=00;90:*.tmp=00;90:*.ucf-dist=00;90:*.ucf-new=00;90:*.ucf-old=00;90:', 'VSCODE_GIT_IPC_HANDLE': '/run/user/1000/vscode-git-371e241172.sock', 'TERM_PROGRAM': 'vscode', 'ROS_DOMAIN_ID': '126', 'AMENT_PREFIX_PATH': '/home/ubuntu/ros2_ws/install/robot_vision_camera:/home/ubuntu/ros2_ws/install/hw_4:/home/ubuntu/ros2_ws/install/prm_planner:/home/ubuntu/ros2_ws/install/apriltag_ros:/opt/ros/jazzy', 'SHELL': '/bin/bash', 'LESSCLOSE': '/usr/bin/lesspipe %s %s', 'CLAUDECODE': '1', 'ROS_AUTOMATIC_DISCOVERY_RANGE': 'SUBNET', 'VSCODE_GIT_ASKPASS_EXTRA_ARGS': '', 'PWD': '/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/build/hw_5', 'ENABLE_IDE_INTEGRATION': 'true', 'LC_ALL': 'en_US.UTF-8', 'SSH_CONNECTION': '10.42.0.171 60772 10.42.0.1 22', 'XDG_DATA_DIRS': '/usr/local/share:/usr/share:/var/lib/snapd/desktop', 'PYTHONPATH': '/home/ubuntu/ros2_ws/install/hw_4/lib/python3.12/site-packages:/home/ubuntu/ros2_ws/install/prm_planner/lib/python3.12/site-packages:/opt/ros/jazzy/lib/python3.12/site-packages', 'HOMEBREW_REPOSITORY': '/home/linuxbrew/.linuxbrew/Homebrew', 'COLCON': '1', 'CMAKE_PREFIX_PATH': '/home/ubuntu/ros2_ws/install/robot_vision_camera:/home/ubuntu/ros2_ws/install/prm_planner:/home/ubuntu/ros2_ws/install/apriltag_ros:/opt/ros/jazzy/opt/gz_math_vendor:/opt/ros/jazzy/opt/gz_utils_vendor:/opt/ros/jazzy/opt/gz_cmake_vendor:/home/ubuntu/ros2_ws/install/hw_4:/opt/ros/jazzy'}), 'shell': False}
+[0.099944] (-) TimerEvent: {}
+[0.182689] (hw_5) StdoutLine: {'line': b'-- The C compiler identification is GNU 13.3.0\n'}
+[0.200178] (-) TimerEvent: {}
+[0.300659] (-) TimerEvent: {}
+[0.336797] (hw_5) StdoutLine: {'line': b'-- The CXX compiler identification is GNU 13.3.0\n'}
+[0.390104] (hw_5) StdoutLine: {'line': b'-- Detecting C compiler ABI info\n'}
+[0.400888] (-) TimerEvent: {}
+[0.501371] (-) TimerEvent: {}
+[0.601865] (-) TimerEvent: {}
+[0.623199] (hw_5) StdoutLine: {'line': b'-- Detecting C compiler ABI info - done\n'}
+[0.677348] (hw_5) StdoutLine: {'line': b'-- Check for working C compiler: /usr/bin/cc - skipped\n'}
+[0.680455] (hw_5) StdoutLine: {'line': b'-- Detecting C compile features\n'}
+[0.681041] (hw_5) StdoutLine: {'line': b'-- Detecting C compile features - done\n'}
+[0.700918] (hw_5) StdoutLine: {'line': b'-- Detecting CXX compiler ABI info\n'}
+[0.702137] (-) TimerEvent: {}
+[0.802636] (-) TimerEvent: {}
+[0.903204] (-) TimerEvent: {}
+[0.921543] (hw_5) StdoutLine: {'line': b'-- Detecting CXX compiler ABI info - done\n'}
+[0.968090] (hw_5) StdoutLine: {'line': b'-- Check for working CXX compiler: /usr/bin/c++ - skipped\n'}
+[0.969768] (hw_5) StdoutLine: {'line': b'-- Detecting CXX compile features\n'}
+[0.970243] (hw_5) StdoutLine: {'line': b'-- Detecting CXX compile features - done\n'}
+[0.974664] (hw_5) StdoutLine: {'line': b'-- Found ament_cmake: 2.5.4 (/opt/ros/jazzy/share/ament_cmake/cmake)\n'}
+[1.003663] (-) TimerEvent: {}
+[1.104196] (-) TimerEvent: {}
+[1.204823] (-) TimerEvent: {}
+[1.247438] (hw_5) StdoutLine: {'line': b'-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter \n'}
+[1.305001] (-) TimerEvent: {}
+[1.405627] (-) TimerEvent: {}
+[1.506538] (-) TimerEvent: {}
+[1.518479] (hw_5) StdoutLine: {'line': b'-- Found rosidl_default_generators: 1.6.0 (/opt/ros/jazzy/share/rosidl_default_generators/cmake)\n'}
+[1.528470] (hw_5) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c\n'}
+[1.593315] (hw_5) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp\n'}
+[1.606863] (-) TimerEvent: {}
+[1.645087] (hw_5) StdoutLine: {'line': b'-- Found rosidl_adapter: 4.6.6 (/opt/ros/jazzy/share/rosidl_adapter/cmake)\n'}
+[1.707152] (-) TimerEvent: {}
+[1.807795] (-) TimerEvent: {}
+[1.908482] (-) TimerEvent: {}
+[2.008918] (-) TimerEvent: {}
+[2.109398] (-) TimerEvent: {}
+[2.210285] (-) TimerEvent: {}
+[2.310766] (-) TimerEvent: {}
+[2.411412] (-) TimerEvent: {}
+[2.512001] (-) TimerEvent: {}
+[2.612493] (-) TimerEvent: {}
+[2.713069] (-) TimerEvent: {}
+[2.813757] (-) TimerEvent: {}
+[2.830264] (hw_5) StdoutLine: {'line': b'-- Found ament_cmake_ros: 0.12.0 (/opt/ros/jazzy/share/ament_cmake_ros/cmake)\n'}
+[2.914015] (-) TimerEvent: {}
+[3.015010] (-) TimerEvent: {}
+[3.115888] (-) TimerEvent: {}
+[3.216868] (-) TimerEvent: {}
+[3.317420] (-) TimerEvent: {}
+[3.417985] (-) TimerEvent: {}
+[3.518747] (-) TimerEvent: {}
+[3.619307] (-) TimerEvent: {}
+[3.719941] (-) TimerEvent: {}
+[3.740534] (hw_5) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c\n'}
+[3.820143] (-) TimerEvent: {}
+[3.920642] (-) TimerEvent: {}
+[4.022697] (-) TimerEvent: {}
+[4.123331] (-) TimerEvent: {}
+[4.224008] (-) TimerEvent: {}
+[4.324624] (-) TimerEvent: {}
+[4.425155] (-) TimerEvent: {}
+[4.525808] (-) TimerEvent: {}
+[4.626394] (-) TimerEvent: {}
+[4.728114] (-) TimerEvent: {}
+[4.828608] (-) TimerEvent: {}
+[4.929165] (-) TimerEvent: {}
+[4.981392] (hw_5) StdoutLine: {'line': b'-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp\n'}
+[4.998368] (hw_5) StdoutLine: {'line': b'-- Found python_cmake_module: 0.11.1 (/opt/ros/jazzy/share/python_cmake_module/cmake)\n'}
+[5.029497] (-) TimerEvent: {}
+[5.130044] (-) TimerEvent: {}
+[5.230630] (-) TimerEvent: {}
+[5.289177] (hw_5) StdoutLine: {'line': b'-- Found PythonExtra: /usr/bin/python3  \n'}
+[5.331001] (-) TimerEvent: {}
+[5.431403] (-) TimerEvent: {}
+[5.534023] (-) TimerEvent: {}
+[5.634458] (-) TimerEvent: {}
+[5.734903] (-) TimerEvent: {}
+[5.835411] (-) TimerEvent: {}
+[5.935862] (-) TimerEvent: {}
+[6.036350] (-) TimerEvent: {}
+[6.136611] (-) TimerEvent: {}
+[6.176644] (hw_5) StdoutLine: {'line': b'-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter Development NumPy Development.Module Development.Embed \n'}
+[6.237304] (-) TimerEvent: {}
+[6.285691] (hw_5) StderrLine: {'line': b'CMake Error at /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:122 (add_custom_target):\n'}
+[6.287309] (hw_5) StderrLine: {'line': b'  add_custom_target cannot create target "ament_cmake_python_copy_hw_5"\n'}
+[6.287712] (hw_5) StderrLine: {'line': b'  because another target with the same name already exists.  The existing\n'}
+[6.288077] (hw_5) StderrLine: {'line': b'  target is a custom target created in source directory\n'}
+[6.288475] (hw_5) StderrLine: {'line': b'  "/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5".  See documentation for policy\n'}
+[6.288841] (hw_5) StderrLine: {'line': b'  CMP0002 for more details.\n'}
+[6.289201] (hw_5) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[6.289625] (hw_5) StderrLine: {'line': b'  /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:39 (_ament_cmake_python_install_package)\n'}
+[6.289989] (hw_5) StderrLine: {'line': b'  CMakeLists.txt:18 (ament_python_install_package)\n'}
+[6.290382] (hw_5) StderrLine: {'line': b'\n'}
+[6.290757] (hw_5) StderrLine: {'line': b'\n'}
+[6.291117] (hw_5) StderrLine: {'line': b'CMake Error at /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:144 (add_custom_target):\n'}
+[6.291523] (hw_5) StderrLine: {'line': b'  add_custom_target cannot create target "ament_cmake_python_build_hw_5_egg"\n'}
+[6.291927] (hw_5) StderrLine: {'line': b'  because another target with the same name already exists.  The existing\n'}
+[6.292326] (hw_5) StderrLine: {'line': b'  target is a custom target created in source directory\n'}
+[6.292702] (hw_5) StderrLine: {'line': b'  "/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5".  See documentation for policy\n'}
+[6.293059] (hw_5) StderrLine: {'line': b'  CMP0002 for more details.\n'}
+[6.293463] (hw_5) StderrLine: {'line': b'Call Stack (most recent call first):\n'}
+[6.293830] (hw_5) StderrLine: {'line': b'  /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:39 (_ament_cmake_python_install_package)\n'}
+[6.294187] (hw_5) StderrLine: {'line': b'  CMakeLists.txt:18 (ament_python_install_package)\n'}
+[6.294583] (hw_5) StderrLine: {'line': b'\n'}
+[6.294945] (hw_5) StderrLine: {'line': b'\n'}
+[6.309840] (hw_5) StdoutLine: {'line': b'-- Configuring incomplete, errors occurred!\n'}
+[6.322694] (hw_5) CommandEnded: {'returncode': 1}
+[6.337532] (-) TimerEvent: {}
+[6.382780] (hw_5) JobEnded: {'identifier': 'hw_5', 'rc': 1}
+[6.394988] (-) EventReactorShutdown: {}

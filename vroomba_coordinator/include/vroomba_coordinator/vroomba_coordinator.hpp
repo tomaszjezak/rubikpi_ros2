@@ -42,6 +42,30 @@ bool grid_initialized_;
 
 // robot state
 geometry_msgs::msg::PoseStamped::SharedPtr latest_robot_pose_;
+rclcpp::Time last_pose_time_;
+
+// Parameters
+double cell_size_;
+double robot_radius_;
+
+// random walk state
+std::mt19937 rng_;
+rclcpp::Time random_turn_start_time_;
+bool in_random_turn_;
+
+// callbacks
+void robot_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+void control_loop();
+
+// vroomba architecture subsumption layers
+geometry_msgs::msg::Twist layer1_smart_wander();
+geometry_msgs::msg::Twist layer2_random_walk();
+
+// helper functions
+bool is_grid_initialized() const;
+void update_grid_map();
+
+
 
 
 }

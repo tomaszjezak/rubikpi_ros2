@@ -23,16 +23,24 @@ except ImportError:
     APRILTAG_AVAILABLE = False
     print("Warning: apriltag_msgs not available. AprilTag detection will be disabled.")
 
+from hw_5.srv import GetWorkspaceBounds
+
 try:
     from .ekf_slam_core import (
         ekf_slam, ROBOT_STATE_SIZE, LM_SIZE, calc_n_lm,
         get_landmark_position_from_state, pi_2_pi
     )
 except ImportError:
-    from ekf_slam_core import (
-        ekf_slam, ROBOT_STATE_SIZE, LM_SIZE, calc_n_lm,
-        get_landmark_position_from_state, pi_2_pi
-    )
+    try:
+        from hw_5.ekf_slam_core import (
+            ekf_slam, ROBOT_STATE_SIZE, LM_SIZE, calc_n_lm,
+            get_landmark_position_from_state, pi_2_pi
+        )
+    except ImportError:
+        from ekf_slam_core import (
+            ekf_slam, ROBOT_STATE_SIZE, LM_SIZE, calc_n_lm,
+            get_landmark_position_from_state, pi_2_pi
+        )
 
 
 class EKF_SLAM_Node(Node):
@@ -156,7 +164,14 @@ class EKF_SLAM_Node(Node):
             '/ekf_slam/robot_pose',
             10
         )
-        
+
+        # Services
+        self.bounds_service = self.create_service(
+            GetWorkspaceBounds,
+            'get_workspace_bounds',
+            self.handle_get_workspace_bounds
+        )
+
         # Timer for EKF update
         self.ekf_timer = self.create_timer(self.dt, self.ekf_update)
         
@@ -672,7 +687,51 @@ class EKF_SLAM_Node(Node):
             self.get_logger().info(f'      Orientation: {angle_deg:.2f}°')
         
         self.get_logger().info('=' * 70)
-    
+
+    def compute_workspace_bounds(self):
+        """
+        Compute workspace bounding box from landmark positions
+
+        Returns:
+            tuple: (min_x, min_y, max_x, max_y) or raises RuntimeError if insufficient landmarks
+        """
+        nLM = calc_n_lm(self.xEst)
+        min_landmarks = 12  # Need at least 12 tags
+
+        if nLM < min_landmarks:
+            raise RuntimeError(f"FATAL: Only {nLM} landmarks detected, need at least {min_landmarks} for workspace bounds")
+
+        # Extract all landmark positions
+        landmark_positions = []
+        for i in range(nLM):
+            lm = get_landmark_position_from_state(self.xEst, i)
+            landmark_positions.append((lm[0, 0], lm[1, 0]))
+
+        # Compute bounds with no margin (margin = 0.0)
+        margin = 0.0
+        min_x = min(lm[0] for lm in landmark_positions) - margin
+        max_x = max(lm[0] for lm in landmark_positions) + margin
+        min_y = min(lm[1] for lm in landmark_positions) - margin
+        max_y = max(lm[1] for lm in landmark_positions) + margin
+
+        return (min_x, min_y, max_x, max_y)
+
+    def handle_get_workspace_bounds(self, request, response):
+        """
+        Service callback to get workspace bounds
+        Raises RuntimeError if insufficient landmarks (crashes the node)
+        """
+        min_x, min_y, max_x, max_y = self.compute_workspace_bounds()
+
+        response.min_x = min_x
+        response.min_y = min_y
+        response.max_x = max_x
+        response.max_y = max_y
+
+        self.get_logger().info(f'[WORKSPACE BOUNDS] Provided bounds: min=({min_x:.3f}, {min_y:.3f}), max=({max_x:.3f}, {max_y:.3f})')
+
+        return response
+
     def save_slam_data(self):
         """Save SLAM data to pickle file for post-processing visualization"""
         try:

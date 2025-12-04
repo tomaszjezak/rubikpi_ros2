@@ -26,7 +26,7 @@ include_directories(include)
 
 # Create executable
 add_executable(vroomba_coordinator_node
-  src/vroomba_coordinator_node.cpp
+  src/vroomba_coordinator.cpp
 )
 
 # Target dependencies

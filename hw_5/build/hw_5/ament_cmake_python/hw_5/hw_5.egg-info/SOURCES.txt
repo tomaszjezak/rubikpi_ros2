@@ -1,0 +1,6 @@
+setup.py
+hw_5/__init__.py
+hw_5.egg-info/PKG-INFO
+hw_5.egg-info/SOURCES.txt
+hw_5.egg-info/dependency_links.txt
+hw_5.egg-info/top_level.txt

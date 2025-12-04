@@ -1,0 +1,242 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-3c24140ced0b85fbba26.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18
+					]
+				},
+				{
+					"build" : "hw_5__py",
+					"jsonFile" : "directory-hw_5__py-80e702c9f8d161da47fa.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "build/hw_5/hw_5__py",
+					"targetIndexes" : 
+					[
+						4
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0,
+						1
+					],
+					"name" : "hw_5",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_build_hw_5_egg::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_build_hw_5_egg-4dea0797834955a14519.json",
+					"name" : "ament_cmake_python_build_hw_5_egg",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_copy_hw_5::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_copy_hw_5-e7f9e5b8665c28ba53f2.json",
+					"name" : "ament_cmake_python_copy_hw_5",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5-56dd1fee651f72792a85.json",
+					"name" : "hw_5",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__cpp-5135aa01ad5ae405c41e.json",
+					"name" : "hw_5__cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "hw_5__py::@35262dba0ebab11eee90",
+					"jsonFile" : "target-hw_5__py-74f70bbb8e8c4dcedbf9.json",
+					"name" : "hw_5__py",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_generator_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_generator_c-2ba361daf7a8e027e4f2.json",
+					"name" : "hw_5__rosidl_generator_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_generator_py::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_generator_py-a991906a8daa961006dc.json",
+					"name" : "hw_5__rosidl_generator_py",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_generator_type_description::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_generator_type_description-293fcc4bc06dbfa13e39.json",
+					"name" : "hw_5__rosidl_generator_type_description",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_typesupport_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_typesupport_c-afd31da0b3ef383d9b40.json",
+					"name" : "hw_5__rosidl_typesupport_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_typesupport_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_typesupport_cpp-3ac0f0629403cc5677ab.json",
+					"name" : "hw_5__rosidl_typesupport_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_typesupport_fastrtps_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_typesupport_fastrtps_c-d33def3af5c9f4fddb4b.json",
+					"name" : "hw_5__rosidl_typesupport_fastrtps_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_typesupport_fastrtps_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_typesupport_fastrtps_cpp-eccdaf3793804aae4fa8.json",
+					"name" : "hw_5__rosidl_typesupport_fastrtps_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_typesupport_introspection_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_typesupport_introspection_c-f7d5b1e89b0f4eff91ea.json",
+					"name" : "hw_5__rosidl_typesupport_introspection_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5__rosidl_typesupport_introspection_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5__rosidl_typesupport_introspection_cpp-45195a6a2e9dbc761817.json",
+					"name" : "hw_5__rosidl_typesupport_introspection_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5_s__rosidl_typesupport_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5_s__rosidl_typesupport_c-eef611c7d1f8fbf1c81e.json",
+					"name" : "hw_5_s__rosidl_typesupport_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5_s__rosidl_typesupport_fastrtps_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5_s__rosidl_typesupport_fastrtps_c-750cc2285687836c6efd.json",
+					"name" : "hw_5_s__rosidl_typesupport_fastrtps_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5_s__rosidl_typesupport_introspection_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5_s__rosidl_typesupport_introspection_c-7e78b9e736cbf373ab67.json",
+					"name" : "hw_5_s__rosidl_typesupport_introspection_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "hw_5_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-hw_5_uninstall-d7e2fbdadaceefb49705.json",
+					"name" : "hw_5_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-415ef00797736f9ff205.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/build/hw_5",
+		"source" : "/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 6
+	}
+}

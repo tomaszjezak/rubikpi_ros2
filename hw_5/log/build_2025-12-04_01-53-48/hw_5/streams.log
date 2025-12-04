@@ -1,0 +1,36 @@
+[0.019s] Invoking command in '/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/build/hw_5': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/ubuntu/ros2_ws/install/hw_4:/opt/ros/jazzy /usr/bin/cmake /home/ubuntu/ros2_ws/rubikpi_ros2/hw_5 -DCMAKE_INSTALL_PREFIX=/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/install/hw_5
+[0.054s] -- Found ament_cmake: 2.5.4 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.098s] -- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+[0.236s] -- Found rosidl_default_generators: 1.6.0 (/opt/ros/jazzy/share/rosidl_default_generators/cmake)
+[0.243s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.301s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.340s] -- Found rosidl_adapter: 4.6.6 (/opt/ros/jazzy/share/rosidl_adapter/cmake)
+[0.825s] -- Found ament_cmake_ros: 0.12.0 (/opt/ros/jazzy/share/ament_cmake_ros/cmake)
+[1.018s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[1.286s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[1.286s] -- Found python_cmake_module: 0.11.1 (/opt/ros/jazzy/share/python_cmake_module/cmake)
+[1.797s] -- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter Development NumPy Development.Module Development.Embed 
+[1.854s] CMake Error at /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:122 (add_custom_target):
+[1.855s]   add_custom_target cannot create target "ament_cmake_python_copy_hw_5"
+[1.855s]   because another target with the same name already exists.  The existing
+[1.856s]   target is a custom target created in source directory
+[1.856s]   "/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5".  See documentation for policy
+[1.856s]   CMP0002 for more details.
+[1.857s] Call Stack (most recent call first):
+[1.857s]   /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:39 (_ament_cmake_python_install_package)
+[1.858s]   CMakeLists.txt:18 (ament_python_install_package)
+[1.858s] 
+[1.859s] 
+[1.859s] CMake Error at /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:144 (add_custom_target):
+[1.859s]   add_custom_target cannot create target "ament_cmake_python_build_hw_5_egg"
+[1.860s]   because another target with the same name already exists.  The existing
+[1.861s]   target is a custom target created in source directory
+[1.862s]   "/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5".  See documentation for policy
+[1.863s]   CMP0002 for more details.
+[1.863s] Call Stack (most recent call first):
+[1.864s]   /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:39 (_ament_cmake_python_install_package)
+[1.866s]   CMakeLists.txt:18 (ament_python_install_package)
+[1.867s] 
+[1.867s] 
+[1.868s] -- Configuring incomplete, errors occurred!
+[1.878s] Invoked command in '/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/build/hw_5' returned '1': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/ubuntu/ros2_ws/install/hw_4:/opt/ros/jazzy /usr/bin/cmake /home/ubuntu/ros2_ws/rubikpi_ros2/hw_5 -DCMAKE_INSTALL_PREFIX=/home/ubuntu/ros2_ws/rubikpi_ros2/hw_5/install/hw_5

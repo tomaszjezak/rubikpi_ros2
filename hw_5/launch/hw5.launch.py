@@ -107,18 +107,18 @@ def generate_launch_description():
         ]
     )
 
-    prm_planner = TimerAction(
-        period=8.0,
-        actions=[
-            Node(
-                package='prm_planner',
-                executable='prm_planner_node',
-                name='prm_planner_node',
-                output='screen',
-                emulate_tty=True,
-            )
-        ]
-    )
+    # prm_planner = TimerAction(
+    #     period=8.0,
+    #     actions=[
+    #         Node(
+    #             package='prm_planner',
+    #             executable='prm_planner_node',
+    #             name='prm_planner_node',
+    #             output='screen',
+    #             emulate_tty=True,
+    #         )
+    #     ]
+    # )
 
     hw5 = TimerAction(
         period=10.0,
@@ -151,6 +151,6 @@ def generate_launch_description():
         motor_controller,
         velocity_mapping,
         ekf_slam,
-        prm_planner,
+        # prm_planner,  # Disabled
         hw5,
     ])
