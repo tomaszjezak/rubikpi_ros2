@@ -48,7 +48,7 @@ ament_target_dependencies(vroomba_coordinator_node
 
 # Link libraries
 target_link_libraries(vroomba_coordinator_node
-  grid_coverage_base_lib
+  grid_coverage_base::grid_coverage_base_lib
 )
 
 # Link service types

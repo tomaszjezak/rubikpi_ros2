@@ -14,6 +14,8 @@ import time
 import pickle
 import os
 from pathlib import Path
+import yaml
+from ament_index_python.packages import get_package_share_directory
 
 # Try to import apriltag_msgs, fallback if not available
 try:
@@ -44,10 +46,38 @@ except ImportError:
 
 
 class EKF_SLAM_Node(Node):
+    def load_ground_truth_landmarks(self):
+        """Load ground truth landmarks from YAML file"""
+        try:
+            # Use ROS2 package share directory to find config
+            pkg_share = get_package_share_directory('hw_5')
+            config_path = os.path.join(pkg_share, 'configs', 'ground_truth_landmarks.yaml')
+        except Exception as e:
+            self.get_logger().error(f'Could not find hw_5 package: {e}')
+            return {}
+
+        if not os.path.exists(config_path):
+            self.get_logger().error(f'Landmark config not found at {config_path}')
+            return {}
+
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        landmarks = {}
+        for lm in config['landmarks']:
+            tag_id = lm['tag_id']
+            x = lm['x']
+            y = lm['y']
+            landmarks[tag_id] = (x, y)
+
+        self.get_logger().info(f'Loaded {len(landmarks)} ground truth landmarks from {config_path}')
+        return landmarks
+
     def __init__(self):
         super().__init__('ekf_slam_node')
 
         # Declare parameters
+        self.declare_parameter('use_preloaded_landmarks', False)  # Toggle for hw4 vs hw5 mode
         self.declare_parameter('max_range', 1.50)
         self.declare_parameter('max_angular', 0.524)  # 45° FOV cone (±45° = 90° total)
         self.declare_parameter('dt', 0.1)
@@ -61,6 +91,7 @@ class EKF_SLAM_Node(Node):
         self.declare_parameter('log_tag_filtering', True)  # Enable detailed tag filtering logs
         
         # Get parameters
+        self.use_preloaded_landmarks = self.get_parameter('use_preloaded_landmarks').get_parameter_value().bool_value
         self.max_range = self.get_parameter('max_range').get_parameter_value().double_value
         self.max_angular = self.get_parameter('max_angular').get_parameter_value().double_value
         self.dt = self.get_parameter('dt').get_parameter_value().double_value
@@ -81,6 +112,7 @@ class EKF_SLAM_Node(Node):
         # Log all parameters from YAML
         self.get_logger().info('=' * 70)
         self.get_logger().info('[PARAMETERS LOADED FROM YAML]')
+        self.get_logger().info(f'  use_preloaded_landmarks: {self.use_preloaded_landmarks}')
         self.get_logger().info(f'  max_range: {self.max_range}')
         self.get_logger().info(f'  max_angular: {self.max_angular}')
         self.get_logger().info(f'  dt: {self.dt}')
@@ -98,18 +130,67 @@ class EKF_SLAM_Node(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
 
-        # Initialize EKF state with ONLY robot pose (true SLAM - landmarks discovered dynamically)
-        # Robot starts at old (0,0) = new (1.9685, 0.7620) in transformed coordinate system
-        # Initial yaw = π/2 (90°) to face upwards (positive Y direction)
-        self.xEst = np.array([[1.9685], [0.7620], [np.pi/2]])  # [x, y, yaw]
+        # Conditional initialization based on use_preloaded_landmarks parameter
+        if self.use_preloaded_landmarks:
+            # HW4 MODE: Preload all landmarks from config file
+            self.get_logger().info('=' * 70)
+            self.get_logger().info('[HW4 MODE] Initializing with preloaded landmarks')
 
-        # Initialize covariance matrix with ONLY robot state
-        # Landmarks will be added dynamically as they are observed
-        robot_cov = np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
-        self.PEst = robot_cov.copy()
+            # Load ground truth landmarks
+            ground_truth_landmarks = self.load_ground_truth_landmarks()
 
-        self.get_logger().info('EKF SLAM initialized with robot-only state (true SLAM mode)')
-        self.get_logger().info(f'Initial pose: x={self.xEst[0,0]:.3f}m, y={self.xEst[1,0]:.3f}m, yaw={math.degrees(self.xEst[2,0]):.1f}°')
+            # Initialize EKF state with robot + all known landmarks
+            # Robot starts at old (0,0) = new (1.9685, 0.7620) in transformed coordinate system
+            # Initial yaw = π/2 (90°) to face upwards (positive Y direction)
+            self.xEst = np.array([[1.9685], [0.7620], [np.pi/2]])  # [x, y, yaw]
+
+            # Pre-populate tag_id to landmark index mapping
+            self.tag_id_to_landmark_index = {}
+
+            # Add all known landmarks to state vector
+            landmark_uncertainty = 0.02  # 2cm standard deviation (allow some landmark uncertainty to reduce jumping)
+            for landmark_idx, (tag_id, (lm_x, lm_y)) in enumerate(sorted(ground_truth_landmarks.items())):
+                # Add landmark to state vector
+                self.xEst = np.vstack((self.xEst, np.array([[lm_x], [lm_y]])))
+                # Map tag_id to landmark index
+                self.tag_id_to_landmark_index[tag_id] = landmark_idx
+                self.get_logger().info(f'Pre-loaded landmark: Tag {tag_id} at [{lm_x:.4f}, {lm_y:.4f}]m (index {landmark_idx})')
+
+            # Initialize covariance matrix
+            # Robot part: use parameters
+            robot_cov = np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
+
+            # Landmark part: very small uncertainty (landmarks are known)
+            num_landmarks = len(ground_truth_landmarks)
+            landmark_cov = np.eye(LM_SIZE * num_landmarks) * (landmark_uncertainty ** 2)
+
+            # Build full covariance matrix
+            self.PEst = np.zeros((ROBOT_STATE_SIZE + LM_SIZE * num_landmarks,
+                                  ROBOT_STATE_SIZE + LM_SIZE * num_landmarks))
+            self.PEst[0:ROBOT_STATE_SIZE, 0:ROBOT_STATE_SIZE] = robot_cov
+            self.PEst[ROBOT_STATE_SIZE:, ROBOT_STATE_SIZE:] = landmark_cov
+
+            self.get_logger().info(f'EKF SLAM initialized with {num_landmarks} preloaded landmarks')
+            self.get_logger().info(f'Initial pose: x={self.xEst[0,0]:.3f}m, y={self.xEst[1,0]:.3f}m, yaw={math.degrees(self.xEst[2,0]):.1f}°')
+            self.get_logger().info('=' * 70)
+        else:
+            # HW5 MODE: True SLAM - landmarks discovered dynamically
+            # Initialize EKF state with ONLY robot pose
+            # Robot starts at old (0,0) = new (1.9685, 0.7620) in transformed coordinate system
+            # Initial yaw = π/2 (90°) to face upwards (positive Y direction)
+            self.xEst = np.array([[1.9685], [0.7620], [np.pi/2]])  # [x, y, yaw]
+
+            # Initialize covariance matrix with ONLY robot state
+            # Landmarks will be added dynamically as they are observed
+            robot_cov = np.diag([state_cov_x, state_cov_y, state_cov_yaw]) ** 2
+            self.PEst = robot_cov.copy()
+
+            # Tag ID to landmark index mapping (empty - landmarks discovered dynamically)
+            # Maps AprilTag ID -> landmark index in state vector
+            self.tag_id_to_landmark_index = {}
+
+            self.get_logger().info('EKF SLAM initialized with robot-only state (true SLAM mode)')
+            self.get_logger().info(f'Initial pose: x={self.xEst[0,0]:.3f}m, y={self.xEst[1,0]:.3f}m, yaw={math.degrees(self.xEst[2,0]):.1f}°')
 
         # Storage
         self.trajectory_history = []  # Full trajectory at EKF update rate
@@ -119,7 +200,7 @@ class EKF_SLAM_Node(Node):
         self.last_u_time = None
         self.is_turning = False  # Flag to detect pure rotation commands
         self.prev_is_turning = False  # Track previous state to detect transitions
-        
+
         # Waypoint detection - use same waypoints and tolerance as hw5.py
         # These match the waypoints defined in hw5.py
         self.waypoints = np.array([
@@ -128,16 +209,12 @@ class EKF_SLAM_Node(Node):
             [-0.850000,  0.000000,  3.14159],
             [ 0.000000,  0.000000,  -1.5708],
         ])
-        self.waypoint_tolerance = 0.15  # meters - same as hw5.py tolerance
+        self.waypoint_tolerance = 0.2  # meters - same as hw5.py tolerance
         self.reached_waypoints = set()  # Track which waypoints we've already logged
-        
+
         # Latest detections
         self.latest_detections = None
         self.latest_detections_time = None
-
-        # Tag ID to landmark index mapping (empty - landmarks discovered dynamically)
-        # Maps AprilTag ID -> landmark index in state vector
-        self.tag_id_to_landmark_index = {}
 
         # Subscriptions
         self.cmd_vel_sub = self.create_subscription(
@@ -209,8 +286,8 @@ class EKF_SLAM_Node(Node):
         if not hasattr(self, '_cmd_vel_log_counter'):
             self._cmd_vel_log_counter = 0
         self._cmd_vel_log_counter += 1
-        if self._cmd_vel_log_counter % 100 == 0:
-            self.get_logger().info(f'[CMD_VEL] v={msg.linear.x:.3f} m/s, ω={msg.angular.z:.3f} rad/s')
+        # if self._cmd_vel_log_counter % 100 == 0:
+        #     self.get_logger().info(f'[CMD_VEL] v={msg.linear.x:.3f} m/s, ω={msg.angular.z:.3f} rad/s')
         
         # Detect turn command: linear velocity near zero but angular velocity non-zero
         # This indicates pure rotation (wheels turning in opposite directions)
@@ -230,12 +307,12 @@ class EKF_SLAM_Node(Node):
     def detections_callback(self, msg):
         """Store latest detections"""
         # Throttle all detection logs (every 10 seconds at 10Hz)
-        if self.tag_log_counter % 100 == 0:
-            if len(msg.detections) > 0:
-                tag_ids = [str(d.id) for d in msg.detections]
-                self.get_logger().info(f'[DETECTIONS] {len(msg.detections)} tag(s): {", ".join(tag_ids)}')
-            else:
-                self.get_logger().info('[DETECTIONS] Callback received but no tags detected')
+        # if self.tag_log_counter % 100 == 0:
+        #     if len(msg.detections) > 0:
+        #         tag_ids = [str(d.id) for d in msg.detections]
+        #         self.get_logger().info(f'[DETECTIONS] {len(msg.detections)} tag(s): {", ".join(tag_ids)}')
+        #     else:
+        #         self.get_logger().info('[DETECTIONS] Callback received but no tags detected')
         self.latest_detections = msg
         self.latest_detections_time = self.get_clock().now()
     
@@ -383,10 +460,11 @@ class EKF_SLAM_Node(Node):
                     tf_str = ', '.join([f'Tag {tid}' for tid in filtered_by_tf])
                     log_lines.append(f'  FILTERED - no TF ({len(filtered_by_tf)}): {tf_str}')
                 
-                self.get_logger().info('\n'.join(log_lines))
-            else:
+                # self.get_logger().info('\n'.join(log_lines))
+                pass
+            # else:
                 # Log when no tags detected at all
-                self.get_logger().info('[TAG FILTERING] No tags detected')
+                # self.get_logger().info('[TAG FILTERING] No tags detected')
         
         return measurements_with_ids
     
@@ -423,8 +501,8 @@ class EKF_SLAM_Node(Node):
             z = np.array([]).reshape(0, 2)
             landmark_indices = None
             # Log when no tags are used (throttled: every 100 updates = ~10 seconds)
-            if self.log_tag_filtering and self.tag_log_counter % 100 == 0:
-                self.get_logger().info('[EKF UPDATE] No tags used - prediction only')
+            # if self.log_tag_filtering and self.tag_log_counter % 100 == 0:
+            #     self.get_logger().info('[EKF UPDATE] No tags used - prediction only')
         else:
             # Separate measurements and tag IDs
             tag_ids = [m[0] for m in measurements_with_ids]
@@ -450,7 +528,7 @@ class EKF_SLAM_Node(Node):
                 new_tags = [tid for tid in tag_ids if tid not in self.tag_id_to_landmark_index]
                 if new_tags:
                     self.get_logger().info(f'[EKF UPDATE] New tags detected: {new_tags}')
-                self.get_logger().info(f'[EKF UPDATE] Using {len(tag_ids)} tag(s): {tag_ids} for SLAM')
+                # self.get_logger().info(f'[EKF UPDATE] Using {len(tag_ids)} tag(s): {tag_ids} for SLAM')
         
         # Run EKF SLAM with tag ID-based data association
         # Pass is_turning flag to prevent position updates during pure rotation
@@ -626,7 +704,7 @@ class EKF_SLAM_Node(Node):
         robot_x = self.xEst[0, 0]
         robot_y = self.xEst[1, 0]
         robot_yaw = self.xEst[2, 0]
-        self.get_logger().info(f'  Robot: x={robot_x:.4f}m, y={robot_y:.4f}m, yaw={math.degrees(robot_yaw):.2f}°')
+        # self.get_logger().info(f'  Robot: x={robot_x:.4f}m, y={robot_y:.4f}m, yaw={math.degrees(robot_yaw):.2f}°')
         
         # # Landmarks (sorted by tag ID)
         # if nLM > 0:

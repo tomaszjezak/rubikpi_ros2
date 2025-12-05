@@ -52,7 +52,7 @@ private:
   // TF
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
-  
+
   // Grid map
   std::unique_ptr<grid_coverage_base::GridMap> grid_map_;
   bool grid_initialized_;
@@ -69,6 +69,7 @@ private:
   double turn_weight_;  // Weight for turn minimization heuristic
   double density_weight_;  // Weight for frontier density heuristic
   double distance_weight_;  // Weight for distance heuristic
+  double min_distance_cells_;  // Minimum distance in cells (filter out closer waypoints)
   double viz_rate_;  // Visualization publish rate (Hz)
   
   // Random number generator
@@ -90,8 +91,6 @@ private:
   // Helper functions
   bool is_grid_initialized() const;
   void update_grid_map();
-  std::vector<CandidateCell> find_frontiers_with_lookahead(
-    int robot_grid_x, int robot_grid_y, int lookahead_radius);
   double score_candidate_cell(
     int cell_grid_x, int cell_grid_y,
     int robot_grid_x, int robot_grid_y, double robot_yaw);

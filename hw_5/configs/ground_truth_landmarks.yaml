@@ -1,5 +1,5 @@
 # Ground truth landmark positions for SLAM evaluation and reference
-# NOTE: This file is NOT loaded by the EKF SLAM node - landmarks are discovered dynamically
+# NOTE: This file is loaded when use_preloaded_landmarks=true (HW4 mode), otherwise landmarks are discovered dynamically (HW5 mode)
 # Format: tag_id, x (meters), y (meters)
 # Origin is at the corner near tags 5 and 6 (bottom-left)
 # These positions are used for plotting and performance evaluation only

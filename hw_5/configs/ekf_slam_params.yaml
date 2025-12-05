@@ -1,10 +1,11 @@
 /**:
   ros__parameters:
-    max_range: 2.5  # meters - maximum AprilTag detection range
-    max_angular: 0.785  # radians (45°) - field of view cone from robot forward axis (±45° = 90° total FOV)
+    use_preloaded_landmarks: true  # Toggle: false=HW5 true SLAM (dynamic), true=HW4 mode (preloaded)
+    max_range: 1.7  # meters - maximum AprilTag detection range
+    max_angular: 0.5  # radians (45°) - field of view cone from robot forward axis (±45° = 90° total FOV)
     dt: 0.1  # seconds - EKF update period (10 Hz)
-    process_noise_v: 0.015  # m/s (std dev) - linear velocity process noise
-    process_noise_w: 0.2  # rad/s (std dev, ±11.5°/s) - angular velocity process noise
+    process_noise_v: 0.1  # m/s (std dev) - linear velocity process noise
+    process_noise_w: 0.3  # rad/s (std dev, ±11.5°/s) - angular velocity process noise
     measurement_noise_r: 0.1  # meters (std dev, 10cm) - AprilTag range measurement noise
     measurement_noise_b: 0.1  # radians (std dev, ±5.7°) - AprilTag bearing measurement noise
     # Initial state uncertainty (variance, not std dev)

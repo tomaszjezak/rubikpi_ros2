@@ -9,20 +9,18 @@ import os
 
 def generate_launch_description():
     """
-    Launch file for hw_5 package.
+    Launch file for hw_5 package with Vroomba grid coverage.
     Starts nodes in sequence:
     1. robot_vision_camera - camera driver
     2. apriltag_ros - AprilTag detection
     3. camera_tf - static tf_node
     4. [5s delay] motor_control, velocity_mapping, ekf_slam_node
-    5. [8s delay] prm_planner_node - path planning service
-    6. [10s delay] hw5 - PID-based waypoint navigation with PRM integration
+    5. [8s delay] vroomba_coordinator_node - grid coverage waypoint generation
+    6. [10s delay] hw5 - PID-based waypoint navigation with vroomba integration
 
     Usage:
-        ros2 launch hw_5 hw5.launch.py                              # distance mode, movement enabled (default)
-        ros2 launch hw_5 hw5.launch.py planning_mode:=safe         # safe mode
+        ros2 launch hw_5 hw5.launch.py                              # default mode, movement enabled
         ros2 launch hw_5 hw5.launch.py enable_movement:=false      # disable robot movement
-        ros2 launch hw_5 hw5.launch.py planning_mode:=safe enable_movement:=false  # safe mode, no movement
     """
     
     # Declare launch argument for planning mode
@@ -120,6 +118,19 @@ def generate_launch_description():
     #     ]
     # )
 
+    vroomba_coordinator = TimerAction(
+        period=8.0,
+        actions=[
+            Node(
+                package='vroomba_coordinator',
+                executable='vroomba_coordinator_node',
+                name='vroomba_coordinator_node',
+                output='screen',
+                emulate_tty=True,
+            )
+        ]
+    )
+
     hw5 = TimerAction(
         period=10.0,
         actions=[
@@ -151,6 +162,6 @@ def generate_launch_description():
         motor_controller,
         velocity_mapping,
         ekf_slam,
-        # prm_planner,  # Disabled
+        vroomba_coordinator,
         hw5,
     ])

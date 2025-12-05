@@ -17,7 +17,7 @@ class VelocityToMotorNode(Node):
         self.right_linear_deadzone = 0.10
         self.right_linear_slope = 2.5 
         
-        program = 'square'
+        program = 'new'
         if program == 'octagon':
             self.left_angular_deadzone = 0.235
             self.left_angular_slope = 16.0
@@ -27,6 +27,11 @@ class VelocityToMotorNode(Node):
             self.left_angular_deadzone = 0.20
             self.left_angular_slope = 16.0
             self.right_angular_deadzone = 0.20
+            self.right_angular_slope = 16.0
+        elif program == 'new':
+            self.left_angular_deadzone = 0.235
+            self.left_angular_slope = 16.0
+            self.right_angular_deadzone = 0.235
             self.right_angular_slope = 16.0
         else:
             # compile error

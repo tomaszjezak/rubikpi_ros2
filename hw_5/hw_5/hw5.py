@@ -6,6 +6,7 @@ from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Path
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster
 from prm_planner.srv import GetPRMPath
+from vroomba_coordinator.srv import GetNextWaypoint
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import Point, Quaternion
@@ -186,7 +187,7 @@ class Hw5Node(Node):
         
         self.current_waypoint_idx = 0
         self.waypoint_reached = False
-        self.tolerance = 0.30 # [m] - increased for more lenient waypoint reaching
+        self.tolerance = 0.2 # [m] - waypoint reaching tolerance
         self.angle_tolerance = 0.35 # [rad] ≈20° - more chill about orientation
         # self.backward_threshold = np.deg2rad(100)  # Skip waypoints more than 100° behind - DISABLED
 
@@ -194,13 +195,8 @@ class Hw5Node(Node):
         self.using_tag_localization = False
         self.tag_initialized = False
 
-        # Request path from PRM planner service if enabled
-        if self.get_parameter('use_prm_planner').get_parameter_value().bool_value:
-            self._request_prm_path()
-        else:
-            # Use octagonal drive pattern when PRM is disabled
-            self.waypoints = waypoints_octagon
-            self.get_logger().info(f'Using octagonal path with {len(self.waypoints)} waypoints')
+        self.waypoints = waypoints_single_square
+        self.get_logger().info(f'Using square path with {len(self.waypoints)} waypoints')
 
         self.dt = 0.1
         self.control_timer = self.create_timer(self.dt, self.control_loop)
@@ -209,9 +205,16 @@ class Hw5Node(Node):
         self.stage = 'rotate_to_face_selected_waypoint'
         self.prev_stage = self.stage
         self.stage_pid = PIDcontroller(0.8, 0.01, 0.005)
-        self.fixed_rotation_vel = 0.700  # 0.785
+        self.fixed_rotation_vel = 0.785
 
         self.do_nothing_ticks = 0
+        self.is_in_explore_mode = True
+        
+        # Vroomba service client for waypoint generation
+        self.vroomba_client = self.create_client(GetNextWaypoint, 'get_next_waypoint')
+        self.waiting_for_waypoint = False
+        self.get_logger().info('Waiting for vroomba waypoint service...')
+        # Don't block here - service will be checked when needed
 
     def euler_to_quaternion(self, roll, pitch, yaw):
         """
@@ -230,68 +233,6 @@ class Hw5Node(Node):
         qz = cr * cp * sy - sr * sp * cy
         
         return qx, qy, qz, qw
-
-    def _request_prm_path(self):
-        """
-        Request a path from the PRM planner service and populate waypoints list.
-        This is called once during initialization.
-        """
-        # Get start and goal from parameters
-        start_x = self.get_parameter('start_x').get_parameter_value().double_value
-        start_y = self.get_parameter('start_y').get_parameter_value().double_value
-        goal_x = self.get_parameter('goal_x').get_parameter_value().double_value
-        goal_y = self.get_parameter('goal_y').get_parameter_value().double_value
-
-        self.get_logger().info(
-            f'Requesting PRM path from ({start_x:.3f}, {start_y:.3f}) '
-            f'to ({goal_x:.3f}, {goal_y:.3f})'
-        )
-
-        # Create service client
-        prm_client = self.create_client(GetPRMPath, 'get_prm_path')
-
-        # Wait for service to be available (10 second timeout)
-        if not prm_client.wait_for_service(timeout_sec=10.0):
-            self.get_logger().error(
-                'PRM planner service not available! Using fallback waypoint [0,0,0]'
-            )
-            self.waypoints = np.array([[0.0, 0.0, 0.0]])
-            return
-
-        # Create request
-        request = GetPRMPath.Request()
-        request.start_x = start_x
-        request.start_y = start_y
-        request.goal_x = goal_x
-        request.goal_y = goal_y
-        request.planning_mode = self.planning_mode
-
-        # Call service synchronously
-        future = prm_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=30.0)
-
-        if future.result() is not None:
-            response = future.result()
-            if response.success:
-                # Log received path plan with first few elements
-                path_len = len(response.path_x)
-                first_few = min(3, path_len)
-                path_preview = ', '.join([f'({response.path_x[i]:.3f}, {response.path_y[i]:.3f})' for i in range(first_few)])
-                self.get_logger().info(
-                    f'Received path plan: {path_len} points. First {first_few}: [{path_preview}]'
-                )
-                # Plot the path plan
-                self._plot_path_plan(response.path_x, response.path_y, start_x, start_y, goal_x, goal_y, self.planning_mode)
-                # Convert path to waypoints with orientations
-                self._convert_path_to_waypoints(response.path_x, response.path_y)
-            else:
-                self.get_logger().error(
-                    f'PRM path planning failed: {response.message}'
-                )
-                self.waypoints = np.array([[0.0, 0.0, 0.0]])
-        else:
-            self.get_logger().error('PRM service call failed or timed out')
-            self.waypoints = np.array([[0.0, 0.0, 0.0]])
 
     def _plot_path_plan(self, path_x, path_y, start_x, start_y, goal_x, goal_y, planning_mode='distance'):
         """
@@ -351,47 +292,6 @@ class Hw5Node(Node):
             plt.close(fig)
         except Exception as e:
             self.get_logger().warn(f'Failed to plot path: {e}')
-    
-    def _convert_path_to_waypoints(self, path_x, path_y):
-        """
-        Convert PRM path (x, y coordinates) to waypoints with orientations.
-        Each waypoint faces the direction of travel to the next point.
-
-        Args:
-            path_x: List of x coordinates
-            path_y: List of y coordinates
-        """
-        if len(path_x) == 0 or len(path_y) == 0:
-            self.waypoints = np.array([[0.0, 0.0, 0.0]])
-            self.current_waypoint_idx = 0  # Reset index
-            self.waypoint_reached = False  # Reset waypoint reached flag
-            return
-
-        waypoints_list = []
-
-        for i in range(len(path_x)):
-            x = path_x[i]
-            y = path_y[i]
-
-            # Calculate orientation to face next waypoint
-            if i < len(path_x) - 1:
-                # Not the last point - face toward next point
-                delta_x = path_x[i + 1] - x
-                delta_y = path_y[i + 1] - y
-                theta = np.arctan2(delta_y, delta_x)
-            else:
-                # Last point - keep the same orientation as the previous waypoint
-                if len(waypoints_list) > 0:
-                    theta = waypoints_list[-1][2]
-                else:
-                    theta = 0.0
-
-            waypoints_list.append([x, y, theta])
-
-        self.waypoints = np.array(waypoints_list)
-        self.current_waypoint_idx = 0  # Reset to start of new path
-        self.waypoint_reached = False  # Reset waypoint reached flag
-        self.get_logger().info(f'Converted path to {len(self.waypoints)} waypoints')
 
     def get_desired_heading_to_goal(self, current_wp):
         """
@@ -404,35 +304,6 @@ class Hw5Node(Node):
         desired_heading = angle_to_target
 
         return desired_heading
-
-    def is_waypoint_behind(self, waypoint_idx):
-        """
-        Check if a waypoint is significantly behind the robot's current heading.
-        Returns True if the waypoint is more than backward_threshold degrees behind.
-
-        Args:
-            waypoint_idx: Index of waypoint to check
-
-        Returns:
-            bool: True if waypoint is behind robot, False otherwise
-        """
-        if waypoint_idx >= len(self.waypoints):
-            return False
-
-        waypoint = self.waypoints[waypoint_idx]
-
-        # Calculate angle to waypoint
-        delta_x = waypoint[0] - self.current_state[0]
-        delta_y = waypoint[1] - self.current_state[1]
-        angle_to_waypoint = np.arctan2(delta_y, delta_x)
-
-        # Calculate relative angle (waypoint angle - robot heading)
-        relative_angle = angle_to_waypoint - self.current_state[2]
-        # Normalize to [-pi, pi]
-        relative_angle = (relative_angle + np.pi) % (2 * np.pi) - np.pi
-
-        # Check if waypoint is behind (absolute angle > threshold)
-        return abs(relative_angle) > self.backward_threshold
 
     def get_rotation_direction(self, heading_error):
         """
@@ -450,6 +321,68 @@ class Hw5Node(Node):
         """
         twist_msg = Twist()
         self.cmd_vel_pub.publish(twist_msg)
+    
+    def request_new_waypoint(self):
+        """
+        Request a new waypoint from vroomba coordinator service
+        """
+        # Check if service is available
+        if not self.vroomba_client.service_is_ready():
+            self.get_logger().warn('Vroomba service not available yet')
+            return
+        
+        # Create request with current robot pose
+        request = GetNextWaypoint.Request()
+        request.current_x = float(self.current_state[0])
+        request.current_y = float(self.current_state[1])
+        request.current_yaw = float(self.current_state[2])
+        request.num_waypoints = 1  # Request 1 waypoint at a time
+        
+        self.get_logger().info(
+            f'Calling vroomba service at position ({request.current_x:.3f}, {request.current_y:.3f}, '
+            f'{np.degrees(request.current_yaw):.1f}°)'
+        )
+        
+        # Call service asynchronously
+        future = self.vroomba_client.call_async(request)
+        future.add_done_callback(self.waypoint_response_callback)
+    
+    def waypoint_response_callback(self, future):
+        """
+        Handle response from vroomba waypoint service
+        """
+        try:
+            response = future.result()
+            
+            if response.success and len(response.waypoint_x) > 0:
+                # Got waypoint(s) from vroomba
+                new_waypoints = []
+                for i in range(len(response.waypoint_x)):
+                    x = response.waypoint_x[i]
+                    y = response.waypoint_y[i]
+                    # Calculate heading ourselves (vroomba doesn't provide useful theta)
+                    theta = math.atan2(y - self.current_state[1], x - self.current_state[0])
+                    new_waypoints.append([x, y, theta])
+                    self.get_logger().info(
+                        f'Received waypoint from vroomba: ({x:.3f}, {y:.3f}, {np.degrees(theta):.1f}°)'
+                    )
+                
+                # Add new waypoints to the list
+                if len(self.waypoints) == 0:
+                    self.waypoints = np.array(new_waypoints)
+                else:
+                    self.waypoints = np.vstack((self.waypoints, new_waypoints))
+                
+                self.waiting_for_waypoint = False
+                self.get_logger().info(f'Added {len(new_waypoints)} waypoint(s), total now: {len(self.waypoints)}')
+                
+            else:
+                self.get_logger().error('Vroomba service failed to generate waypoint')
+                self.waiting_for_waypoint = False
+                
+        except Exception as e:
+            self.get_logger().error(f'Service call failed: {e}')
+            self.waiting_for_waypoint = False
 
     def control_loop(self):
         """
@@ -487,31 +420,21 @@ class Hw5Node(Node):
         
         # Dead check:
         if self.prev_stage != self.stage:
-            self.do_nothing_ticks = 5
+            self.do_nothing_ticks = 0 # 2
             self.prev_stage = self.stage
         if self.do_nothing_ticks > 0:
             self.do_nothing_ticks -= 1
             self.stop_robot()
             return
-        
-        # Skip waypoints that are behind the robot - DISABLED
-        # while self.current_waypoint_idx < len(self.waypoints):
-        #     if self.is_waypoint_behind(self.current_waypoint_idx):
-        #         self.get_logger().info(
-        #             f'Skipping waypoint {self.current_waypoint_idx} '
-        #             f'(more than {np.degrees(self.backward_threshold):.0f}° behind robot)'
-        #         )
-        #         self.current_waypoint_idx += 1
-        #         self.waypoint_reached = False
-        #     else:
-        #         break
 
         if self.current_waypoint_idx >= len(self.waypoints):
-            # Only log once when all waypoints are reached
-            if not hasattr(self, '_waypoints_complete_logged'):
-                self.get_logger().info('All waypoints reached! Stopping robot.')
-                self._waypoints_complete_logged = True
-            # self.stop_robot()
+            # Waypoints exhausted - request new waypoint from vroomba
+            if not self.waiting_for_waypoint:
+                self.get_logger().info('Waypoints exhausted - requesting new waypoint from vroomba...')
+                self.request_new_waypoint()
+                self.waiting_for_waypoint = True
+            # Stop and wait for new waypoint
+            self.stop_robot()
             return
 
 
@@ -578,6 +501,7 @@ class Hw5Node(Node):
                 else:
                     update_value = self.pid.update(self.current_state)
                     twist_msg.linear.x = float(update_value[0])
+        
 
         # Store current stage for next iteration
         self._prev_stage = self.stage
