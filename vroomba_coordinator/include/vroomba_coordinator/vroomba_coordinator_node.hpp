@@ -65,6 +65,7 @@ private:
   double cell_size_;
   double robot_radius_;
   int lookahead_radius_;
+  int max_search_radius_;  // Maximum search radius for progressive expansion
   double forward_bias_weight_;  // Weight for forward bias heuristic
   double turn_weight_;  // Weight for turn minimization heuristic
   double density_weight_;  // Weight for frontier density heuristic

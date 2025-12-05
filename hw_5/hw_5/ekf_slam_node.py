@@ -7,6 +7,7 @@ Main SLAM processing node that integrates with ROS2
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseStamped, TransformStamped
+from visualization_msgs.msg import Marker, MarkerArray
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster
 import numpy as np
 import math
@@ -239,6 +240,11 @@ class EKF_SLAM_Node(Node):
         self.robot_pose_pub = self.create_publisher(
             PoseStamped,
             '/ekf_slam/robot_pose',
+            10
+        )
+        self.landmark_marker_pub = self.create_publisher(
+            MarkerArray,
+            '/ekf_slam/landmark_markers',
             10
         )
 
@@ -589,7 +595,10 @@ class EKF_SLAM_Node(Node):
         
         # Publish robot pose
         self.publish_robot_pose()
-        
+
+        # Publish landmark markers for visualization
+        self.publish_landmark_markers()
+
         # Broadcast robot TF: odom -> base_link (EKF estimated pose)
         self.broadcast_tf()
         
@@ -648,7 +657,71 @@ class EKF_SLAM_Node(Node):
         t.transform.rotation.z = sy
         
         self.tf_broadcaster.sendTransform(t)
-    
+
+    def publish_landmark_markers(self):
+        """Publish EKF SLAM estimated landmark positions as visualization markers"""
+        marker_array = MarkerArray()
+        current_time = self.get_clock().now().to_msg()
+
+        # Iterate through all discovered landmarks
+        for tag_id, landmark_idx in self.tag_id_to_landmark_index.items():
+            # Get landmark position from state vector
+            lm_pos = get_landmark_position_from_state(self.xEst, landmark_idx)
+
+            # Small sphere marker for EKF estimated tag position
+            sphere = Marker()
+            sphere.header.frame_id = 'odom'
+            sphere.header.stamp = current_time
+            sphere.ns = 'ekf_landmark_positions'
+            sphere.id = tag_id
+            sphere.type = Marker.SPHERE
+            sphere.action = Marker.ADD
+
+            sphere.pose.position.x = float(lm_pos[0, 0])
+            sphere.pose.position.y = float(lm_pos[1, 0])
+            sphere.pose.position.z = 0.08  # Slightly above ground
+            sphere.pose.orientation.w = 1.0
+
+            # Small sphere size
+            sphere.scale.x = 0.1
+            sphere.scale.y = 0.1
+            sphere.scale.z = 0.1
+
+            # Blue/cyan color to distinguish from ground truth (orange)
+            sphere.color.r = 0.0
+            sphere.color.g = 0.7
+            sphere.color.b = 1.0
+            sphere.color.a = 0.9
+
+            marker_array.markers.append(sphere)
+
+            # Text label showing tag ID
+            text = Marker()
+            text.header.frame_id = 'odom'
+            text.header.stamp = current_time
+            text.ns = 'ekf_landmark_labels'
+            text.id = tag_id + 1000  # Offset to avoid ID collision
+            text.type = Marker.TEXT_VIEW_FACING
+            text.action = Marker.ADD
+
+            text.pose.position.x = float(lm_pos[0, 0])
+            text.pose.position.y = float(lm_pos[1, 0])
+            text.pose.position.z = 0.25  # Above the sphere
+            text.pose.orientation.w = 1.0
+
+            text.scale.z = 0.08  # Text height
+
+            text.color.r = 0.0
+            text.color.g = 0.9
+            text.color.b = 1.0
+            text.color.a = 1.0
+
+            text.text = f"EKF-{tag_id}"
+
+            marker_array.markers.append(text)
+
+        self.landmark_marker_pub.publish(marker_array)
+
     def log_status(self, robot_state, u, z, nLM):
         """Log comprehensive status update"""
         # EKF SLAM logs commented out to reduce spam

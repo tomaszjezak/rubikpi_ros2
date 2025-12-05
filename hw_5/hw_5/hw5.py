@@ -103,6 +103,7 @@ class Hw5Node(Node):
         self.planning_mode = planning_mode
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.waypoint_marker_pub = self.create_publisher(MarkerArray, '/waypoint_markers', 10)
+        self.tag_marker_pub = self.create_publisher(MarkerArray, '/apriltag_locations', 10)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -200,7 +201,11 @@ class Hw5Node(Node):
 
         self.dt = 0.1
         self.control_timer = self.create_timer(self.dt, self.control_loop)
-        self.localization_timer = self.create_timer(self.dt, self.localization_update) 
+        # self.localization_timer = self.create_timer(self.dt, self.localization_update)
+
+        # Load ground truth landmarks and publish visualization
+        self.load_ground_truth_landmarks()
+        self.create_timer(1.0, self.publish_tag_markers) 
         
         self.stage = 'rotate_to_face_selected_waypoint'
         self.prev_stage = self.stage
@@ -560,6 +565,10 @@ class Hw5Node(Node):
         
         TODO This code assumes the tag locations are known.
         """
+        # Skip if tag positions not loaded (using EKF SLAM instead)
+        if tag_id not in self.tag_positions:
+            return
+            
         tag_map = self.tag_positions[tag_id]
         
         tag_map_pos = np.array([tag_map['x'], tag_map['y'], tag_map['z']])
@@ -737,6 +746,88 @@ class Hw5Node(Node):
 
         # Publish the marker array
         self.waypoint_marker_pub.publish(marker_array)
+
+    def load_ground_truth_landmarks(self):
+        """Load ground truth landmark positions from YAML config file"""
+        try:
+            hw5_pkg_path = get_package_share_directory('hw_5')
+            landmark_file = os.path.join(hw5_pkg_path, 'configs', 'ground_truth_landmarks.yaml')
+
+            with open(landmark_file, 'r') as f:
+                config = yaml.safe_load(f)
+
+            # Store landmarks in tag_positions dict
+            for landmark in config['landmarks']:
+                tag_id = landmark['tag_id']
+                self.tag_positions[tag_id] = {
+                    'x': landmark['x'],
+                    'y': landmark['y'],
+                    'z': 0.0  # Ground level
+                }
+
+            self.get_logger().info(f'Loaded {len(self.tag_positions)} ground truth landmarks for visualization')
+        except Exception as e:
+            self.get_logger().error(f'Failed to load ground truth landmarks: {e}')
+
+    def publish_tag_markers(self):
+        """Publish ground truth AprilTag locations as small sphere markers in RViz"""
+        marker_array = MarkerArray()
+        current_time = self.get_clock().now().to_msg()
+
+        for tag_id, tag_data in self.tag_positions.items():
+            # Small sphere marker for tag position
+            sphere = Marker()
+            sphere.header.frame_id = 'ground_truth_landmark'
+            sphere.header.stamp = current_time
+            sphere.ns = 'apriltag_positions'
+            sphere.id = tag_id
+            sphere.type = Marker.SPHERE
+            sphere.action = Marker.ADD
+
+            sphere.pose.position.x = tag_data['x']
+            sphere.pose.position.y = tag_data['y']
+            sphere.pose.position.z = 0.08  # Slightly above ground
+            sphere.pose.orientation.w = 1.0
+
+            # Small sphere size
+            sphere.scale.x = 0.1
+            sphere.scale.y = 0.1
+            sphere.scale.z = 0.1
+
+            # Bright orange color
+            sphere.color.r = 1.0
+            sphere.color.g = 0.5
+            sphere.color.b = 0.0
+            sphere.color.a = 0.9
+
+            marker_array.markers.append(sphere)
+
+            # Text label showing tag ID
+            text = Marker()
+            text.header.frame_id = 'ground_truth_landmark'
+            text.header.stamp = current_time
+            text.ns = 'apriltag_labels'
+            text.id = tag_id + 1000  # Offset to avoid ID collision
+            text.type = Marker.TEXT_VIEW_FACING
+            text.action = Marker.ADD
+
+            text.pose.position.x = tag_data['x']
+            text.pose.position.y = tag_data['y']
+            text.pose.position.z = 0.25  # Above the sphere
+            text.pose.orientation.w = 1.0
+
+            text.scale.z = 0.08  # Text height
+
+            text.color.r = 1.0
+            text.color.g = 1.0
+            text.color.b = 1.0
+            text.color.a = 1.0
+
+            text.text = f"Tag {tag_id}"
+
+            marker_array.markers.append(text)
+
+        self.tag_marker_pub.publish(marker_array)
 
 def main(args=None):
     # Parse command-line arguments for planning mode

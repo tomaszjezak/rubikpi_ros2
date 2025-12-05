@@ -14,6 +14,7 @@ VroombaCoordinatorNode::VroombaCoordinatorNode()
   declare_parameter<double>("cell_size", 0.1);
   declare_parameter<double>("robot_radius", 0.11);
   declare_parameter<int>("lookahead_radius", 3);  // Target 3 cells ahead
+  declare_parameter<int>("max_search_radius", 15);  // Max expansion for progressive search
   // Scoring heuristic weights (for Layer 1 waypoint selection)
   // These control how much each factor matters when choosing which frontier to go to
   declare_parameter<double>("forward_bias_weight", 2.0);  // Prefer cells in front of robot
@@ -27,6 +28,7 @@ VroombaCoordinatorNode::VroombaCoordinatorNode()
   cell_size_ = get_parameter("cell_size").as_double();
   robot_radius_ = get_parameter("robot_radius").as_double();
   lookahead_radius_ = get_parameter("lookahead_radius").as_int();
+  max_search_radius_ = get_parameter("max_search_radius").as_int();
   forward_bias_weight_ = get_parameter("forward_bias_weight").as_double();
   turn_weight_ = get_parameter("turn_weight").as_double();
   density_weight_ = get_parameter("density_weight").as_double();
@@ -212,72 +214,96 @@ std::vector<std::tuple<double, double, double>> VroombaCoordinatorNode::layer2_r
 std::vector<std::tuple<double, double, double>> VroombaCoordinatorNode::layer1_smart_wander(
     double robot_x, double robot_y, double robot_yaw, int num_waypoints)
 {
-  RCLCPP_INFO(get_logger(), "Layer 1: smart wander");
+  RCLCPP_INFO(get_logger(), "Layer 1: Smart Wander (Progressive Radius Expansion)");
+  RCLCPP_INFO(get_logger(), "  Searching from radius %d to %d cells (%.1fm to %.1fm)", 
+              lookahead_radius_, max_search_radius_,
+              lookahead_radius_ * grid_map_->getCellSize(), 
+              max_search_radius_ * grid_map_->getCellSize());
 
   // get robot grid position
   auto [robot_grid_x, robot_grid_y] = grid_map_->worldToGrid(robot_x, robot_y);
 
-  // Find all unknown cells within lookahead radius
-  std::vector<CandidateCell> candidates;
+  // Progressive radius expansion: start at lookahead_radius_, expand up to max_search_radius_
+  for (int search_radius = lookahead_radius_; search_radius <= max_search_radius_; search_radius++) {
+    
+    // Find all unknown cells within current search radius
+    std::vector<CandidateCell> candidates;
+    
+    for (int dy = -search_radius; dy <= search_radius; dy++) {
+      for (int dx = -search_radius; dx <= search_radius; dx++) {
+        int check_x = robot_grid_x + dx;
+        int check_y = robot_grid_y + dy;
 
-  for (int dy = -lookahead_radius_; dy <= lookahead_radius_; dy++) {
-    for (int dx = -lookahead_radius_; dx <= lookahead_radius_; dx++) {
-      int check_x = robot_grid_x + dx;
-      int check_y = robot_grid_y + dy;
+        // Skip if out of bounds
+        if (!grid_map_->isInBounds(check_x, check_y)) continue;
 
-      // Skip if out of bounds
-      if (!grid_map_->isInBounds(check_x, check_y)) continue;
+        // Only consider UNKNOWN cells
+        if (grid_map_->getCellState(check_x, check_y) == grid_coverage_base::CellState::UNKNOWN) {
+          // Score this cell using existing scoring function
+          double score = score_candidate_cell(check_x, check_y, robot_grid_x, robot_grid_y, robot_yaw);
+          candidates.push_back({check_x, check_y, score});
+        }
+      }
+    }
+    
+    // If we found candidates at this radius, score and return
+    if (!candidates.empty()) {
+      if (search_radius > lookahead_radius_) {
+        RCLCPP_INFO(get_logger(), "✓ Found %zu unknown cells at expanded radius %d (started at %d)", 
+                    candidates.size(), search_radius, lookahead_radius_);
+      } else {
+        RCLCPP_INFO(get_logger(), "✓ Found %zu unknown cells at radius %d", 
+                    candidates.size(), search_radius);
+      }
+      
+      // Sort by score (highest first)
+      std::sort(candidates.begin(), candidates.end(),
+        [](const CandidateCell& a, const CandidateCell& b) {
+          return a.score > b.score;
+        });
+      
+      // Generate waypoint from best cell
+      std::vector<std::tuple<double, double, double>> waypoints;
+      
+      auto [best_cell_x, best_cell_y] = grid_map_->gridToWorld(
+        candidates[0].grid_x, candidates[0].grid_y);
+      
+      // Calculate direction from robot to best cell
+      double dx = best_cell_x - robot_x;
+      double dy = best_cell_y - robot_y;
+      double direction = std::atan2(dy, dx);
+      
+      // Scale waypoint distance with search radius, but cap at 5 cells (0.5m)
+      // This makes steps larger in open areas but keeps them reasonable
+      int waypoint_distance_cells = std::min(search_radius, 5);
+      double target_distance = waypoint_distance_cells * grid_map_->getCellSize();
+      double waypoint_x = robot_x + target_distance * std::cos(direction);
+      double waypoint_y = robot_y + target_distance * std::sin(direction);
+      
+      waypoints.push_back({waypoint_x, waypoint_y, 0.0});
 
-      // Only consider UNKNOWN cells
-      if (grid_map_->getCellState(check_x, check_y) == grid_coverage_base::CellState::UNKNOWN) {
-        // Score this cell using existing scoring function
-        double score = score_candidate_cell(check_x, check_y, robot_grid_x, robot_grid_y, robot_yaw);
-        candidates.push_back({check_x, check_y, score});
+      RCLCPP_INFO(get_logger(), "  Best cell at grid (%d, %d), score=%.2f",
+                  candidates[0].grid_x, candidates[0].grid_y, candidates[0].score);
+      RCLCPP_INFO(get_logger(), "  Generated waypoint: (%.3f, %.3f) at %.3fm away (%d cells)",
+                  waypoint_x, waypoint_y, target_distance, waypoint_distance_cells);
+      
+      return waypoints;
+    }
+    
+    // No cells at this radius, log and expand
+    if (search_radius < max_search_radius_) {
+      // Only log every few expansions to avoid spam, or at key milestones
+      if (search_radius == lookahead_radius_ || search_radius % 3 == 0 || search_radius == max_search_radius_ - 1) {
+        RCLCPP_WARN(get_logger(), "  ⟳ Radius %d empty, expanding... (%.1fm search area)", 
+                    search_radius, search_radius * grid_map_->getCellSize());
       }
     }
   }
-
-  // if no unknown cells, fall back to layer 2
-  if (candidates.empty()) {
-    RCLCPP_WARN(get_logger(), "⚠️  Layer 1 FAILED: No unknown cells within %d cell radius!", lookahead_radius_);
-    RCLCPP_WARN(get_logger(), "⚠️  FALLING BACK TO Layer 2 (Random Walk)");
-    return layer2_random_walk(robot_x, robot_y, robot_yaw, num_waypoints);
-  }
-
-  // sort by score - highest first
-  std::sort(candidates.begin(), candidates.end(),
-    [](const CandidateCell& a, const CandidateCell& b) {
-      return a.score > b.score;
-    });
-
-
-  // Generate only 1 waypoint - place it min_distance_cells away in direction of best cell
-  std::vector<std::tuple<double, double, double>> waypoints;
   
-  if (!candidates.empty()) {
-    // Get the best scored cell to determine direction
-    auto [best_cell_x, best_cell_y] = grid_map_->gridToWorld(
-      candidates[0].grid_x, candidates[0].grid_y);
-    
-    // Calculate direction from robot to best cell
-    double dx = best_cell_x - robot_x;
-    double dy = best_cell_y - robot_y;
-    double direction = std::atan2(dy, dx);
-    
-    // Place waypoint exactly min_distance_cells away (in meters) in that direction
-    double target_distance = min_distance_cells_ * grid_map_->getCellSize();
-    double waypoint_x = robot_x + target_distance * std::cos(direction);
-    double waypoint_y = robot_y + target_distance * std::sin(direction);
-    
-    waypoints.push_back({waypoint_x, waypoint_y, 0.0});  // hw5 will calculate heading
-
-    RCLCPP_INFO(get_logger(), "  Best cell at grid (%d, %d), score=%.2f",
-                candidates[0].grid_x, candidates[0].grid_y, candidates[0].score);
-    RCLCPP_INFO(get_logger(), "  Generated waypoint: (%.3f, %.3f) at %.3fm away (%.1f cells)",
-                waypoint_x, waypoint_y, target_distance, min_distance_cells_);
-  }
-
-  return waypoints;
+  // Exhausted all radii up to max_search_radius - fall back to Layer 2
+  RCLCPP_ERROR(get_logger(), "⚠️  Layer 1 FAILED: No unknown cells within %d cell radius!", max_search_radius_);
+  RCLCPP_ERROR(get_logger(), "⚠️  FALLING BACK TO Layer 2 (Random Walk)");
+  return layer2_random_walk(robot_x, robot_y, robot_yaw, num_waypoints);
 }
 
 // ============================================================================
