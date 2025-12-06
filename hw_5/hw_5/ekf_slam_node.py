@@ -6,6 +6,7 @@ Main SLAM processing node that integrates with ROS2
 
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
 from geometry_msgs.msg import Twist, PoseStamped, TransformStamped
 from visualization_msgs.msg import Marker, MarkerArray
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster
@@ -127,7 +128,7 @@ class EKF_SLAM_Node(Node):
         self.get_logger().info('=' * 70)
 
         # Initialize TF
-        self.tf_buffer = Buffer()
+        self.tf_buffer = Buffer(cache_time=Duration(seconds=0.25))  # 0.25s cache - AprilTag frames disappear quickly
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
 

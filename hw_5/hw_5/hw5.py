@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import TransformStamped
-from nav_msgs.msg import Path
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster
-from prm_planner.srv import GetPRMPath
 from vroomba_coordinator.srv import GetNextWaypoint
 from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import ColorRGBA
-from geometry_msgs.msg import Point, Quaternion
 import numpy as np
 import os
 import yaml
 import time
 import math
 from ament_index_python.packages import get_package_share_directory
-from scipy.spatial.transform import Rotation
-import matplotlib.pyplot as plt
 
 """
 The class of the pid controller for differential drive robot.
@@ -65,12 +60,6 @@ class PIDcontroller:
         
         return np.array([distance, heading_error])
 
-    def setMaximumUpdate(self, mv):
-        """
-        set maximum velocity for stability.
-        """
-        self.maximumValue = mv
-
     def update(self, currentState):
         """
         calculate the update value based on PID control
@@ -98,14 +87,16 @@ class PIDcontroller:
         return result
 
 class Hw5Node(Node):
-    def __init__(self, planning_mode='distance'):
+    def __init__(self):
         super().__init__('hw5_node')
-        self.planning_mode = planning_mode
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.waypoint_marker_pub = self.create_publisher(MarkerArray, '/waypoint_markers', 10)
         self.tag_marker_pub = self.create_publisher(MarkerArray, '/apriltag_locations', 10)
 
-        self.tf_buffer = Buffer()
+        # Clear all previous markers on startup
+        self.clear_all_markers()
+
+        self.tf_buffer = Buffer(cache_time=Duration(seconds=0.25))  # 0.25s cache - AprilTag frames disappear quickly
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
 
@@ -118,7 +109,7 @@ class Hw5Node(Node):
         robot_x_init = 1.9685
         robot_y_init = 0.7620
 
-        # Hardcoded waypoint patterns from hw3 (defined in old coordinate system where robot starts at 0,0)
+        # Hardcoded waypoint pattern from hw3 (defined in old coordinate system where robot starts at 0,0)
         # Square drive pattern waypoints (starts by turning left 90 degrees)
         waypoints_single_square_relative = np.array([
             [ 0.000000,  0.850000,  0.0],  # Drive to north 0.85m, face east to read tag
@@ -126,55 +117,14 @@ class Hw5Node(Node):
             [-0.850000,  0.000000,  3.14159],  # Drive south 0.85m, turn west to read tag
             [ 0.000000,  0.000000,  -1.5708],  # Drive east 0.85m, turn south to read tag
         ])
-        # Octagonal drive pattern (defined relative to 0,0)
-        waypoints_octagon_relative = np.array([
-            # 0. Drive forward by 0.425. Face up 45 degrees to read tag
-            [ 0.425000, 0.000000, 0.7854],
-            # Now we are on the octagon edge
-            #. 1. Go up by 0.85m. face upwards cuz whatever
-            [ 0.425000, 0.850000, 1.5708],
-            # 2. Go diagonal up-left by sqrt(2)*0.425
-            [ 0.000000, 1.275000, 2.3562],
-            # 3. Go left by 0.85m
-            [-0.850000, 1.275000, 3.14159],
-            # 4. Go diagonal down-left by sqrt(2)*0.425
-            [-1.275000, 0.850000, -2.3562],
-            # 5. Go down by 0.85m
-            [-1.275000, 0.000000, -1.5708],
-            # 6. Go diagonal down-right by sqrt(2)*0.425
-            [-0.850000, -0.425000, -0.7854],
-            # 7. Go right by 0.85m
-            [ 0.000000, -0.425000, 0.0],
-            # 8. Go diagonal up-right by sqrt(2)*0.425
-            [ 0.425000, 0.000000, 0.7854],
-        ])
 
         # Offset waypoints to robot's actual starting position
         waypoints_single_square = waypoints_single_square_relative.copy()
         waypoints_single_square[:, 0] += robot_x_init  # Offset x
         waypoints_single_square[:, 1] += robot_y_init  # Offset y
 
-        waypoints_octagon = waypoints_octagon_relative.copy()
-        waypoints_octagon[:, 0] += robot_x_init  # Offset x
-        waypoints_octagon[:, 1] += robot_y_init  # Offset y
-
-        # Double patterns
-        waypoints_double_square = np.vstack((waypoints_single_square, waypoints_single_square))
-        waypoints_double_octagon = np.vstack((waypoints_octagon, waypoints_octagon))
-        # 0,0,0 waypoint for testing
-        waypoints_zero = np.array([[0.0, 0.0, 0.0]])
-
-        # Declare parameters for path planning
-        self.declare_parameter('start_x', 1.9685)  # Robot at old (0,0) = new (1.9685, 0.762)
-        self.declare_parameter('start_y', 0.7620)
-        self.declare_parameter('goal_x', 0.31)   # 22" to the right of Tag 4
-        self.declare_parameter('goal_y', 2.117725)   # +0.5m in y direction from previous
-        self.declare_parameter('use_prm_planner', False)
+        # Declare parameters
         self.declare_parameter('enable_movement', True)  # Can be overridden via launch file parameter
-
-        # Waypoints list - populated from PRM planner service
-        # Format: numpy array of [x, y, theta] where x,y are positions and theta is orientation
-        self.waypoints = np.array([[0.0, 0.0, 0.0]])  # Default fallback
 
         # PID controller used to smooth out the forward drive acceleration
         # The parameters are Kp, Ki, Kd
@@ -183,25 +133,16 @@ class Hw5Node(Node):
         self.pid = PIDcontroller(0.8, 0.01, 0.005)
 
         self.current_state = np.array([1.9685, 0.7620, np.pi/2])  # [x, y, yaw] - starts facing upwards
-        # This variable is updated from EKF SLAM pose via TF (odom -> base_link)
-        self.obs_current_state = np.array([1.9685, 0.7620, np.pi/2])
-        
+
         self.current_waypoint_idx = 0
         self.waypoint_reached = False
         self.tolerance = 0.2 # [m] - waypoint reaching tolerance
-        self.angle_tolerance = 0.35 # [rad] ≈20° - more chill about orientation
-        # self.backward_threshold = np.deg2rad(100)  # Skip waypoints more than 100° behind - DISABLED
-
-        self.last_tag_detection_time = 0.0
-        self.using_tag_localization = False
-        self.tag_initialized = False
 
         self.waypoints = waypoints_single_square
         self.get_logger().info(f'Using square path with {len(self.waypoints)} waypoints')
 
         self.dt = 0.1
         self.control_timer = self.create_timer(self.dt, self.control_loop)
-        # self.localization_timer = self.create_timer(self.dt, self.localization_update)
 
         # Load ground truth landmarks and publish visualization
         self.load_ground_truth_landmarks()
@@ -209,17 +150,30 @@ class Hw5Node(Node):
         
         self.stage = 'rotate_to_face_selected_waypoint'
         self.prev_stage = self.stage
-        self.stage_pid = PIDcontroller(0.8, 0.01, 0.005)
         self.fixed_rotation_vel = 0.785
 
         self.do_nothing_ticks = 0
-        self.is_in_explore_mode = True
-        
+
         # Vroomba service client for waypoint generation
         self.vroomba_client = self.create_client(GetNextWaypoint, 'get_next_waypoint')
         self.waiting_for_waypoint = False
         self.get_logger().info('Waiting for vroomba waypoint service...')
         # Don't block here - service will be checked when needed
+
+    def clear_all_markers(self):
+        """
+        Clear all existing waypoint markers in rviz2 on node startup
+        """
+        delete_marker = Marker()
+        delete_marker.action = Marker.DELETEALL
+
+        marker_array = MarkerArray()
+        marker_array.markers.append(delete_marker)
+
+        # Clear waypoint markers only
+        self.waypoint_marker_pub.publish(marker_array)
+
+        self.get_logger().info('Cleared all previous waypoint markers from rviz2')
 
     def euler_to_quaternion(self, roll, pitch, yaw):
         """
@@ -231,72 +185,13 @@ class Hw5Node(Node):
         sp = math.sin(pitch * 0.5)
         cr = math.cos(roll * 0.5)
         sr = math.sin(roll * 0.5)
-        
+
         qw = cr * cp * cy + sr * sp * sy
         qx = sr * cp * cy - cr * sp * sy
         qy = cr * sp * cy + sr * cp * sy
         qz = cr * cp * sy - sr * sp * cy
-        
-        return qx, qy, qz, qw
 
-    def _plot_path_plan(self, path_x, path_y, start_x, start_y, goal_x, goal_y, planning_mode='distance'):
-        """
-        Plot the planned path with workspace and obstacle bounds for visualization.
-        
-        Args:
-            path_x: List of x coordinates
-            path_y: List of y coordinates
-            start_x: Start x coordinate
-            start_y: Start y coordinate
-            goal_x: Goal x coordinate
-            goal_y: Goal y coordinate
-            planning_mode: Planning mode used ("safe" or "distance")
-        """
-        try:
-            fig, ax = plt.subplots(figsize=(10, 10))
-            
-            # Workspace bounds (from PRM planner defaults)
-            workspace_bounds = [0.0, 2.8067, 0.0, 2.6544]
-            obstacle_bounds = [1.336675, 1.654175, 1.003300, 1.416000]
-            
-            # Draw workspace
-            ws_min_x, ws_max_x, ws_min_y, ws_max_y = workspace_bounds
-            ax.add_patch(plt.Rectangle((ws_min_x, ws_min_y), 
-                                      ws_max_x - ws_min_x, ws_max_y - ws_min_y,
-                                      fill=False, edgecolor='gray', linestyle='--', linewidth=1, label='Workspace'))
-            
-            # Draw obstacle box
-            obs_min_x, obs_max_x, obs_min_y, obs_max_y = obstacle_bounds
-            ax.add_patch(plt.Rectangle((obs_min_x, obs_min_y),
-                                      obs_max_x - obs_min_x, obs_max_y - obs_min_y,
-                                      fill=True, facecolor='red', alpha=0.3, edgecolor='red', linewidth=2, label='Obstacle'))
-            
-            # Plot path
-            if len(path_x) > 0:
-                ax.plot(path_x, path_y, 'b-o', linewidth=2, markersize=4, label='Planned Path', zorder=3)
-                # Mark start and goal
-                ax.plot(path_x[0], path_y[0], 'go', markersize=10, label='Start', zorder=4)
-                ax.plot(path_x[-1], path_y[-1], 'ro', markersize=10, label='Goal', zorder=4)
-            
-            # Also plot requested start/goal (in case they differ from path endpoints)
-            ax.plot(start_x, start_y, 'g*', markersize=15, label='Requested Start', zorder=5)
-            ax.plot(goal_x, goal_y, 'r*', markersize=15, label='Requested Goal', zorder=5)
-            
-            ax.set_xlabel('X (m)')
-            ax.set_ylabel('Y (m)')
-            ax.set_title(f'PRM Path Plan - {planning_mode.upper()} Mode ({len(path_x)} waypoints)')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            ax.set_aspect('equal')
-            ax.set_xlim(ws_min_x - 0.1, ws_max_x + 0.1)
-            ax.set_ylim(ws_min_y - 0.1, ws_max_y + 0.1)
-            
-            plt.tight_layout()
-            plt.savefig('/tmp/prm_path_plan.png', dpi=150, bbox_inches='tight')
-            self.get_logger().info('Path plan saved to /tmp/prm_path_plan.png')
-            plt.close(fig)
-        except Exception as e:
-            self.get_logger().warn(f'Failed to plot path: {e}')
+        return qx, qy, qz, qw
 
     def get_desired_heading_to_goal(self, current_wp):
         """
@@ -452,7 +347,6 @@ class Hw5Node(Node):
             self.pid.setTarget(current_wp)
             self.waypoint_reached = True
             self.stage = 'rotate_to_face_selected_waypoint'
-            self.stage_pid.setTarget(current_wp)
             # Log target waypoint when starting new waypoint
             self.get_logger().info(
                 f'Targeting waypoint {self.current_waypoint_idx}: '
@@ -516,90 +410,6 @@ class Hw5Node(Node):
 
         # Publish waypoint visualization markers
         self.publish_waypoint_visualization()
-        
-        
-    def localization_update(self):
-        """Localization update - reads pose from EKF SLAM via TF
-        
-        This function is called every 0.1s by a timer in the constructor.
-        The EKF SLAM node handles pose estimation and broadcasts it via TF.
-        """
-        current_time = time.time()
-        tag_detected = False
-        closest_tag_id = None
-        closest_observation = None
-        closest_distance = float('inf')
-        for tag_id in self.tag_positions.keys():
-            try:
-                tag_frame = f'tag_{tag_id}'
-                observation = self.tf_buffer.lookup_transform('base_link', tag_frame, rclpy.time.Time())
-                transform_time = rclpy.time.Time.from_msg(observation.header.stamp)
-                time_diff = (self.get_clock().now() - transform_time).nanoseconds / 1e9
-                if time_diff > 0.25:
-                    continue
-                dx = observation.transform.translation.x
-                dy = observation.transform.translation.y
-                dz = observation.transform.translation.z
-                distance = np.sqrt(dx*dx + dy*dy + dz*dz)
-                if distance < closest_distance:
-                    closest_distance = distance
-                    closest_tag_id = tag_id
-                    closest_observation = observation
-            except Exception:
-                continue
-        
-        if closest_observation is not None:
-            self.compute_and_publish_robot_pose_from_tag(closest_tag_id, closest_observation)
-            tag_detected = True
-            self.last_tag_detection_time = current_time
-            self.using_tag_localization = True
-        else:
-            tag_detected = False
-            time_since_last_tag = current_time - self.last_tag_detection_time
-            if time_since_last_tag > 1.0:  # 1 second timeout
-                self.using_tag_localization = False
-                
-    def compute_and_publish_robot_pose_from_tag(self, tag_id, tag_observation):
-        """Compute robot pose from tag observation and publish it
-        This is a helper function for the updating localization function.
-        
-        TODO This code assumes the tag locations are known.
-        """
-        # Skip if tag positions not loaded (using EKF SLAM instead)
-        if tag_id not in self.tag_positions:
-            return
-            
-        tag_map = self.tag_positions[tag_id]
-        
-        tag_map_pos = np.array([tag_map['x'], tag_map['y'], tag_map['z']])
-        tag_map_rot = Rotation.from_quat([tag_map['qx'], tag_map['qy'], tag_map['qz'], tag_map['qw']])
-        
-        obs_pos = np.array([
-            tag_observation.transform.translation.x,
-            tag_observation.transform.translation.y,
-            tag_observation.transform.translation.z
-        ])
-        obs_rot = Rotation.from_quat([
-            tag_observation.transform.rotation.x,
-            tag_observation.transform.rotation.y,
-            tag_observation.transform.rotation.z,
-            tag_observation.transform.rotation.w
-        ])
-        
-        tag_to_robot_rot = obs_rot.inv()
-        tag_to_robot_pos = -tag_to_robot_rot.apply(obs_pos)
-        
-        robot_map_rot = tag_map_rot * tag_to_robot_rot
-        robot_map_pos = tag_map_pos + tag_map_rot.apply(tag_to_robot_pos)
-        
-        yaw = robot_map_rot.as_euler('xyz')[2]
-        self.current_state = np.array([robot_map_pos[0], robot_map_pos[1], yaw])
-        self.obs_current_state = np.array([robot_map_pos[0], robot_map_pos[1], yaw])
-        
-        self.get_logger().info(
-            f'Updated pose from tag {tag_id}: '
-            f'pos=({robot_map_pos[0]:.3f}, {robot_map_pos[1]:.3f}), yaw={yaw:.3f}'
-        )
 
     def publish_waypoint_visualization(self):
         """
@@ -777,7 +587,7 @@ class Hw5Node(Node):
         for tag_id, tag_data in self.tag_positions.items():
             # Small sphere marker for tag position
             sphere = Marker()
-            sphere.header.frame_id = 'ground_truth_landmark'
+            sphere.header.frame_id = 'odom'
             sphere.header.stamp = current_time
             sphere.ns = 'apriltag_positions'
             sphere.id = tag_id
@@ -804,7 +614,7 @@ class Hw5Node(Node):
 
             # Text label showing tag ID
             text = Marker()
-            text.header.frame_id = 'ground_truth_landmark'
+            text.header.frame_id = 'odom'
             text.header.stamp = current_time
             text.ns = 'apriltag_labels'
             text.id = tag_id + 1000  # Offset to avoid ID collision
@@ -830,27 +640,9 @@ class Hw5Node(Node):
         self.tag_marker_pub.publish(marker_array)
 
 def main(args=None):
-    # Parse command-line arguments for planning mode
-    import sys
-    planning_mode = 'distance'  # default
-    
-    # Check for --safe or --planning-mode flags
-    if '--safe' in sys.argv:
-        planning_mode = 'safe'
-    elif '--planning-mode' in sys.argv:
-        try:
-            idx = sys.argv.index('--planning-mode')
-            if idx + 1 < len(sys.argv):
-                mode = sys.argv[idx + 1].lower()
-                if mode in ['distance', 'safe']:
-                    planning_mode = mode
-        except (ValueError, IndexError):
-            pass
-    
     rclpy.init(args=args)
-    node = Hw5Node(planning_mode=planning_mode)
-    node.get_logger().info(f'Starting with planning mode: {planning_mode}')
-    
+    node = Hw5Node()
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
